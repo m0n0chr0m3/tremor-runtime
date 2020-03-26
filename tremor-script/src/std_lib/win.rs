@@ -32,7 +32,7 @@ impl TremorAggrFn for First {
         // FIXME: how?
         Ok(())
     }
-    fn emit<'event>(&mut self) -> FResult<Value<'event>> {
+    fn emit<'event>(&self) -> FResult<Value<'event>> {
         if let Some(v) = &self.0 {
             Ok(v.clone())
         } else {
@@ -80,7 +80,7 @@ impl TremorAggrFn for Last {
         // FIXME: how?
         Ok(())
     }
-    fn emit<'event>(&mut self) -> FResult<Value<'event>> {
+    fn emit<'event>(&self) -> FResult<Value<'event>> {
         if let Some(v) = &self.0 {
             Ok(v.clone())
         } else {
@@ -128,7 +128,7 @@ impl TremorAggrFn for CollectFlattened {
         // FIXME: how?
         Ok(())
     }
-    fn emit<'event>(&mut self) -> FResult<Value<'event>> {
+    fn emit<'event>(&self) -> FResult<Value<'event>> {
         Ok(Value::Array(self.0.clone()))
     }
     fn emit_and_init<'event>(&mut self) -> FResult<Value<'event>> {
@@ -172,7 +172,7 @@ impl TremorAggrFn for CollectNested {
         // FIXME: how?
         Ok(())
     }
-    fn emit<'event>(&mut self) -> FResult<Value<'event>> {
+    fn emit<'event>(&self) -> FResult<Value<'event>> {
         Ok(Value::Array(self.0.clone()))
     }
     fn emit_and_init<'event>(&mut self) -> FResult<Value<'event>> {

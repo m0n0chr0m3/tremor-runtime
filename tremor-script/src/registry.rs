@@ -38,7 +38,7 @@ pub trait TremorAggrFn: DowncastSync + Sync + Send {
     /// Compenstate for a value being removed
     fn compensate<'event>(&mut self, args: &[&Value<'event>]) -> FResult<()>;
     /// Emits the function
-    fn emit<'event>(&mut self) -> FResult<Value<'event>>;
+    fn emit<'event>(&self) -> FResult<Value<'event>>;
     /// Initialises an aggregate function
     fn init(&mut self);
     /// Emits the value and reinitialises the function
@@ -674,7 +674,7 @@ impl TremorAggrFnWrapper {
     }
 
     /// Emits the function
-    pub fn emit<'event>(&mut self) -> FResult<Value<'event>> {
+    pub fn emit<'event>(&self) -> FResult<Value<'event>> {
         self.fun.emit()
     }
 

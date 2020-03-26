@@ -19,13 +19,12 @@ use super::{
 
 use crate::ast::*;
 use crate::errors::*;
-use crate::registry::{Registry, TremorAggrFnWrapper};
+use crate::registry::Registry;
 use crate::stry;
 use simd_json::prelude::*;
 use simd_json::value::borrowed::{Object, Value};
 use std::borrow::Borrow;
 use std::borrow::Cow;
-use std::mem;
 
 impl<'run, 'event, 'script> ImutExpr<'script>
 where
@@ -95,13 +94,15 @@ where
 
                 Ok(Cow::Owned(Value::from(object)))
             }
-            ImutExprInt::List(ref list) => {
-                let mut r: Vec<Value<'event>> = Vec::with_capacity(list.exprs.len());
-                for expr in &list.exprs {
-                    r.push(stry!(expr.run(opts, env, event, state, meta, local)).into_owned());
-                }
-                Ok(Cow::Owned(Value::Array(r)))
-            }
+            ImutExprInt::List(ref list) => list
+                .exprs
+                .iter()
+                .map(|expr| {
+                    expr.run(opts, env, event, state, meta, local)
+                        .map(Cow::into_owned)
+                })
+                .collect::<Result<Vec<_>>>()
+                .map(|r| Cow::Owned(Value::Array(r))),
             ImutExprInt::Invoke1(ref call) => {
                 self.invoke1(opts, env, event, state, meta, local, call)
             }
@@ -609,16 +610,14 @@ where
             );
         }
 
-        unsafe {
-            // FIXME?
-            let invocable: &mut TremorAggrFnWrapper =
-                mem::transmute(&env.aggrs[expr.aggr_id].invocable);
-            let r = invocable.emit().map(Cow::Owned).map_err(|e| {
+        env.aggrs[expr.aggr_id]
+            .invocable
+            .emit()
+            .map(Cow::Owned)
+            .map_err(|e| {
                 let r: Option<&Registry> = None;
                 e.into_err(self, self, r, &env.meta)
-            })?;
-            Ok(r)
-        }
+            })
     }
 
     fn patch(

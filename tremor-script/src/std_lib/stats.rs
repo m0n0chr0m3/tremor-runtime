@@ -22,6 +22,7 @@ use math as libmath;
 use simd_json::prelude::*;
 use simd_json::value::borrowed::Value;
 use sketches_ddsketch::{Config as DDSketchConfig, DDSketch};
+use std::cell::RefCell;
 use std::cmp::max;
 use std::f64;
 use std::marker::Send;
@@ -39,7 +40,7 @@ impl TremorAggrFn for Count {
         self.0 -= 1;
         Ok(())
     }
-    fn emit<'event>(&mut self) -> FResult<Value<'event>> {
+    fn emit<'event>(&self) -> FResult<Value<'event>> {
         Ok(Value::from(self.0))
     }
     fn init(&mut self) {
@@ -80,7 +81,7 @@ impl TremorAggrFn for Sum {
         }
         Ok(())
     }
-    fn emit<'event>(&mut self) -> FResult<Value<'event>> {
+    fn emit<'event>(&self) -> FResult<Value<'event>> {
         Ok(Value::from(self.0))
     }
     fn init(&mut self) {
@@ -123,7 +124,7 @@ impl TremorAggrFn for Mean {
         }
         Ok(())
     }
-    fn emit<'event>(&mut self) -> FResult<Value<'event>> {
+    fn emit<'event>(&self) -> FResult<Value<'event>> {
         if self.0 == 0 {
             Ok(Value::null())
         } else {
@@ -182,7 +183,7 @@ impl TremorAggrFn for Min {
 
         Ok(())
     }
-    fn emit<'event>(&mut self) -> FResult<Value<'event>> {
+    fn emit<'event>(&self) -> FResult<Value<'event>> {
         Ok(Value::from(self.0.unwrap_or_default()))
     }
     fn init(&mut self) {
@@ -223,7 +224,7 @@ impl TremorAggrFn for Max {
         // FIXME: how?
         Ok(())
     }
-    fn emit<'event>(&mut self) -> FResult<Value<'event>> {
+    fn emit<'event>(&self) -> FResult<Value<'event>> {
         Ok(Value::from(self.0.unwrap_or_default()))
     }
     fn init(&mut self) {
@@ -279,7 +280,7 @@ impl TremorAggrFn for Var {
         }
         Ok(())
     }
-    fn emit<'event>(&mut self) -> FResult<Value<'event>> {
+    fn emit<'event>(&self) -> FResult<Value<'event>> {
         if self.n == 0 {
             Ok(Value::from(0.0))
         } else {
@@ -322,7 +323,7 @@ impl TremorAggrFn for Stdev {
     fn compensate<'event>(&mut self, args: &[&Value<'event>]) -> FResult<()> {
         self.0.compensate(args)
     }
-    fn emit<'event>(&mut self) -> FResult<Value<'event>> {
+    fn emit<'event>(&self) -> FResult<Value<'event>> {
         self.0.emit().map(|v| {
             if let Some(v) = v.as_f64() {
                 Value::from(v.sqrt())
@@ -352,7 +353,7 @@ impl TremorAggrFn for Stdev {
 
 struct Dds {
     histo: Option<DDSketch>,
-    cache: Vec<f64>,
+    cache: RefCell<Vec<f64>>,
     percentiles: Vec<(String, f64)>,
     percentiles_set: bool,
     //    digits_significant_precision: usize,
@@ -383,7 +384,7 @@ impl std::default::Default for Dds {
     fn default() -> Self {
         Self {
             histo: None,
-            cache: Vec::with_capacity(HIST_INITIAL_CACHE_SIZE),
+            cache: RefCell::new(Vec::with_capacity(HIST_INITIAL_CACHE_SIZE)),
             percentiles: vec![
                 ("0.5".to_string(), 0.5),
                 ("0.9".to_string(), 0.9),
@@ -428,10 +429,11 @@ impl TremorAggrFn for Dds {
             } else if let Some(ref mut histo) = self.histo {
                 histo.add(v);
             } else {
-                self.cache.push(v);
-                if self.cache.len() == HIST_MAX_CACHE_SIZE {
+                let mut cache = self.cache.borrow_mut();
+                cache.push(v);
+                if cache.len() == HIST_MAX_CACHE_SIZE {
                     let mut histo: DDSketch = DDSketch::new(DDSketchConfig::defaults());
-                    for v in self.cache.drain(..) {
+                    for v in cache.drain(..) {
                         histo.add(v);
                     }
                 }
@@ -441,7 +443,7 @@ impl TremorAggrFn for Dds {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn emit<'event>(&mut self) -> FResult<Value<'event>> {
+    fn emit<'event>(&self) -> FResult<Value<'event>> {
         fn err<T>(e: &T) -> FunctionError
         where
             T: ToString,
@@ -488,7 +490,7 @@ impl TremorAggrFn for Dds {
                         }))
         } else {
             let mut histo: DDSketch = DDSketch::new(DDSketchConfig::defaults());
-            for v in self.cache.drain(..) {
+            for v in self.cache.borrow_mut().drain(..) {
                 histo.add(v);
             }
             let count = histo.count();
@@ -584,7 +586,7 @@ impl TremorAggrFn for Dds {
                     histo.merge(other).ok();
                 } else {
                     // if the other was still a cache add it's values
-                    for v in &other.cache {
+                    for v in other.cache.borrow().iter() {
                         histo.add(*v);
                     }
                 }
@@ -595,26 +597,28 @@ impl TremorAggrFn for Dds {
                         // If the other was a histogram clone it and empty our values
                         let mut histo: DDSketch = DDSketch::new(DDSketchConfig::defaults());
                         histo.merge(other).ok();
-                        for v in self.cache.drain(..) {
+                        for v in self.cache.borrow_mut().drain(..) {
                             histo.add(v);
                         }
                         self.histo = Some(histo)
                     }
                     _ => {
                         // If both are caches
-                        if self.cache.len() + other.cache.len() > HIST_MAX_CACHE_SIZE {
+                        let mut self_cache = self.cache.borrow_mut();
+                        let other_cache = other.cache.borrow();
+                        if self_cache.len() + other_cache.len() > HIST_MAX_CACHE_SIZE {
                             // If the cache size exceeds our maximal cache size drain them into a histogram
                             let mut histo: DDSketch = DDSketch::new(DDSketchConfig::defaults());
-                            for v in self.cache.drain(..) {
+                            for v in self_cache.drain(..) {
                                 histo.add(v);
                             }
-                            for v in &other.cache {
+                            for v in other_cache.iter() {
                                 histo.add(*v);
                             }
                             self.histo = Some(histo);
                         } else {
                             // If not append it's cache
-                            self.cache.extend(&other.cache);
+                            self_cache.extend(other_cache.iter());
                         }
                     }
                 }
@@ -625,7 +629,7 @@ impl TremorAggrFn for Dds {
 
     fn init(&mut self) {
         self.histo = None;
-        self.cache.clear();
+        self.cache.borrow_mut().clear();
     }
     fn snot_clone(&self) -> Box<dyn TremorAggrFn> {
         Box::new(self.clone())
@@ -638,7 +642,7 @@ impl TremorAggrFn for Dds {
 #[derive(Clone)]
 struct Hdr {
     histo: Option<Histogram<u64>>,
-    cache: Vec<u64>,
+    cache: RefCell<Vec<u64>>,
     percentiles: Vec<(String, f64)>,
     percentiles_set: bool,
     max: u64,
@@ -651,7 +655,7 @@ impl std::default::Default for Hdr {
         Self {
             //ALLOW: this values have been tested so an error can never be returned
             histo: None,
-            cache: Vec::with_capacity(HIST_INITIAL_CACHE_SIZE),
+            cache: RefCell::new(Vec::with_capacity(HIST_INITIAL_CACHE_SIZE)),
             percentiles: vec![
                 ("0.5".to_string(), 0.5),
                 ("0.9".to_string(), 0.9),
@@ -713,15 +717,16 @@ impl TremorAggrFn for Hdr {
                 if v > self.max {
                     self.max = v;
                 }
-                self.cache.push(v);
-                if self.cache.len() == HIST_MAX_CACHE_SIZE {
+                let mut cache = self.cache.borrow_mut();
+                cache.push(v);
+                if cache.len() == HIST_MAX_CACHE_SIZE {
                     let mut histo: Histogram<u64> = Histogram::new_with_bounds(1, self.max(), 2)
                         .map_err(|e| FunctionError::RuntimeError {
                             mfa: mfa("stats", "hdr", 2),
                             error: format!("failed to allocate hdr storage: {:?}", e),
                         })?;
                     histo.auto(true);
-                    for v in self.cache.drain(..) {
+                    for v in cache.drain(..) {
                         histo.record(v).map_err(|e| FunctionError::RuntimeError {
                             mfa: mfa("stats", "hdr", 2),
                             error: format!("failed to record value: {:?}", e),
@@ -752,7 +757,7 @@ impl TremorAggrFn for Hdr {
                     })?;
                 } else {
                     // if the other was still a cache add it's values
-                    for v in &other.cache {
+                    for v in other.cache.borrow().iter() {
                         histo.record(*v).map_err(|e| FunctionError::RuntimeError {
                             mfa: mfa("stats", "hdr", 2),
                             error: format!("failed to record value: {:?}", e),
@@ -764,7 +769,7 @@ impl TremorAggrFn for Hdr {
                 if let Some(ref other) = other.histo {
                     // If the other was a histogram clone it and empty our values
                     let mut histo = other.clone();
-                    for v in self.cache.drain(..) {
+                    for v in self.cache.borrow_mut().drain(..) {
                         histo.record(v).map_err(|e| FunctionError::RuntimeError {
                             mfa: mfa("stats", "hdr", 2),
                             error: format!("failed to record value: {:?}", e),
@@ -773,7 +778,9 @@ impl TremorAggrFn for Hdr {
                     self.histo = Some(histo)
                 } else {
                     // If both are caches
-                    if self.cache.len() + other.cache.len() > HIST_MAX_CACHE_SIZE {
+                    let mut self_cache = self.cache.borrow_mut();
+                    let other_cache = other.cache.borrow();
+                    if self_cache.len() + other_cache.len() > HIST_MAX_CACHE_SIZE {
                         // If the cache size exceeds our maximal cache size drain them into a histogram
                         self.max = max(self.max, other.max);
                         let mut histo: Histogram<u64> =
@@ -784,13 +791,13 @@ impl TremorAggrFn for Hdr {
                                 }
                             })?;
                         histo.auto(true);
-                        for v in self.cache.drain(..) {
+                        for v in self_cache.drain(..) {
                             histo.record(v).map_err(|e| FunctionError::RuntimeError {
                                 mfa: mfa("stats", "hdr", 2),
                                 error: format!("failed to record value: {:?}", e),
                             })?;
                         }
-                        for v in &other.cache {
+                        for v in other_cache.iter() {
                             histo.record(*v).map_err(|e| FunctionError::RuntimeError {
                                 mfa: mfa("stats", "hdr", 2),
                                 error: format!("failed to record value: {:?}", e),
@@ -799,7 +806,7 @@ impl TremorAggrFn for Hdr {
                         self.histo = Some(histo);
                     } else {
                         // If not append it's cache
-                        self.cache.extend(&other.cache);
+                        self.cache.borrow_mut().extend(other.cache.borrow().iter());
                         self.max = max(self.max, other.max);
                     }
                 }
@@ -812,7 +819,7 @@ impl TremorAggrFn for Hdr {
         // FIXME there's no facility for this with hdr histogram, punt for now
         Ok(())
     }
-    fn emit<'event>(&mut self) -> FResult<Value<'event>> {
+    fn emit<'event>(&self) -> FResult<Value<'event>> {
         let mut p = hashmap! {};
         if let Some(histo) = &self.histo {
             for (pcn, percentile) in &self.percentiles {
@@ -839,7 +846,7 @@ impl TremorAggrFn for Hdr {
                     }
                 })?;
             histo.auto(true);
-            for v in self.cache.drain(..) {
+            for v in self.cache.borrow_mut().drain(..) {
                 histo.record(v).map_err(|e| FunctionError::RuntimeError {
                     mfa: mfa("stats", "hdr", 2),
                     error: format!("failed to record value: {:?}", e),
@@ -865,7 +872,7 @@ impl TremorAggrFn for Hdr {
     fn init(&mut self) {
         self.histo = None;
         self.max = 0;
-        self.cache.clear();
+        self.cache.borrow_mut().clear();
     }
     fn snot_clone(&self) -> Box<dyn TremorAggrFn> {
         Box::new(self.clone())
