@@ -388,7 +388,7 @@ where
     'script: 'event,
     'event: 'run,
 {
-    let mut subrange: Option<(usize, usize)> = None;
+    let mut subrange: Option<&[Value]> = None;
     let mut current: &Value = match path {
         Path::Local(lpath) => match local.values.get(lpath.idx) {
             Some(Some(l)) => l,
@@ -436,30 +436,17 @@ where
             }
             Segment::Idx { idx, .. } => {
                 if let Some(a) = current.as_array() {
-                    let (start, end) = if let Some((start, end)) = subrange {
-                        // We check range on setting the subrange!
-                        (start, end)
-                    } else {
-                        (0, a.len())
-                    };
-                    let idx = *idx as usize + start;
-                    if idx >= end {
-                        // We exceed the sub range
-                        let bad_idx = idx - start;
-                        return error_array_out_of_bound(
-                            outer,
-                            segment,
-                            &path,
-                            bad_idx..bad_idx,
-                            &env.meta,
-                        );
-                    }
+                    let range_to_consider = subrange.unwrap_or(a.as_slice());
+                    let idx = *idx;
 
-                    if let Some(c) = a.get(idx) {
+                    if let Some(c) = range_to_consider.get(idx) {
                         current = c;
                         subrange = None;
                         continue;
                     } else {
+                        // FIXME: wrong error index: it lists `idx`, which is an index into
+                        // `range_to_consider`, but the error message will probably imply it's an
+                        // index into `a`.
                         return error_array_out_of_bound(
                             outer,
                             segment,
@@ -497,30 +484,16 @@ where
                     }
                     (Value::Array(a), idx) => {
                         if let Some(idx) = idx.as_usize() {
-                            let (start, end) = if let Some((start, end)) = subrange {
-                                // We check range on setting the subrange!
-                                (start, end)
-                            } else {
-                                (0, a.len())
-                            };
-                            let idx = idx + start;
-                            if idx >= end {
-                                // We exceed the sub range
-                                let bad_idx = idx - start;
-                                return error_array_out_of_bound(
-                                    outer,
-                                    segment,
-                                    &path,
-                                    bad_idx..bad_idx,
-                                    &env.meta,
-                                );
-                            }
+                            let range_to_consider = subrange.unwrap_or(a.as_slice());
 
-                            if let Some(v) = a.get(idx) {
+                            if let Some(v) = range_to_consider.get(idx) {
                                 current = v;
                                 subrange = None;
                                 continue;
                             } else {
+                                // FIXME: wrong error index: it lists `idx`, which is an index into
+                                // `range_to_consider`, but the error message will probably imply
+                                // it's an index into `a`.
                                 return error_array_out_of_bound(
                                     outer,
                                     segment,
@@ -551,19 +524,19 @@ where
                 ..
             } => {
                 if let Some(a) = current.as_array() {
-                    let (start, end) = if let Some((start, end)) = subrange {
-                        // We check range on setting the subrange!
-                        (start, end)
-                    } else {
-                        (0, a.len())
-                    };
+                    let range_to_consider = subrange.unwrap_or(a.as_slice());
+
                     let s = stry!(range_start.run(opts, env, event, state, meta, local));
                     if let Some(range_start) = s.as_usize() {
-                        let range_start = range_start + start;
                         let e = stry!(range_end.run(opts, env, event, state, meta, local));
                         if let Some(range_end) = e.as_usize() {
-                            let range_end = range_end;
-                            if range_end > end {
+                            // TODO: Do we want this error when a range is selected which is
+                            // longer than the array it is selected from, or can this be silently
+                            // ignored?
+                            // FIXME: As with similar `error_array_out_of_bound` calls in this
+                            // method: the listed indices are indices into `range_to_consider`,
+                            // not into `a`.
+                            if range_end > range_to_consider.len() {
                                 return error_array_out_of_bound(
                                     outer,
                                     segment,
@@ -573,7 +546,7 @@ where
                                     &env.meta,
                                 );
                             } else {
-                                subrange = Some((range_start, range_end));
+                                subrange = Some(&range_to_consider[range_start..range_end]);
                                 continue;
                             }
                         } else {
@@ -590,11 +563,11 @@ where
             }
         }
     }
-    if let Some((start, end)) = subrange {
-        if let Some(a) = current.as_array() {
-            // We check the range whemn we set it;
-            let sub = unsafe { a.get_unchecked(start..end).to_vec() };
-            Ok(Cow::Owned(Value::Array(sub)))
+    if let Some(range_to_consider) = subrange {
+        // TODO: we already know `range_to_consider` contains the range, there's no need to
+        // extract it from `current` anymore. Keep this check anyway?
+        if let Some(_a) = current.as_array() {
+            Ok(Cow::Owned(Value::Array(range_to_consider.to_vec())))
         } else {
             error_need_arr(outer, outer, current.value_type(), &env.meta)
         }
