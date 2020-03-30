@@ -223,7 +223,7 @@ impl<'script> ModuleRaw<'script> {
                         )
                         .into());
                     }
-
+                    dbg!(&name_v);
                     helper.consts.insert(name_v.clone(), consts.len());
                     let expr = expr.up(helper)?;
                     let v = reduce2(expr, &helper)?;
@@ -514,9 +514,18 @@ impl<'script> ImutExprInt<'script> {
                             args2.push(args.get_unchecked(i));
                         }
                     }
+                    const NO_AGGRS: [InvokeAggrFn<'static>; 0] = [];
+                    const NO_CONSTS: Vec<Value<'static>> = Vec::new();
+                    let env = Env {
+                        context: &EventContext::default(),
+                        consts: &NO_CONSTS,
+                        aggrs: &NO_AGGRS,
+                        meta: &helper.meta,
+                    };
+
                     let v = i
                         .invocable
-                        .invoke(&EventContext::default(), &args2)
+                        .invoke(&env, &args2)
                         .map_err(|e| e.into_err(&ex, &ex, Some(&helper.reg), &helper.meta))?
                         .into_static();
                     Ok(ImutExprInt::Literal(Literal {
@@ -731,7 +740,6 @@ impl<'script> Upable<'script> for FnDeclRaw<'script> {
     fn up<'registry>(self, helper: &mut Helper<'script, 'registry>) -> Result<Self::Target> {
         let can_emit = helper.can_emit;
         let mut aggrs = Vec::new();
-        let mut consts = HashMap::new();
         let mut locals: HashMap<_, _> = self
             .args
             .iter()
@@ -743,11 +751,11 @@ impl<'script> Upable<'script> for FnDeclRaw<'script> {
         helper.is_open = self.open;
         helper.fn_argc = self.args.len();
 
-        helper.swap(&mut aggrs, &mut consts, &mut locals);
+        helper.swap2(&mut aggrs, &mut locals);
         helper.possible_leaf = true;
         let body = self.body.up(helper)?;
         helper.possible_leaf = false;
-        helper.swap(&mut aggrs, &mut consts, &mut locals);
+        helper.swap2(&mut aggrs, &mut locals);
         helper.can_emit = can_emit;
         let name = self.name.up(helper)?;
         Ok(FnDecl {
@@ -1962,14 +1970,20 @@ impl_expr!(ConstPathRaw);
 impl<'script> Upable<'script> for ConstPathRaw<'script> {
     type Target = LocalPath<'script>;
     fn up<'registry>(self, helper: &mut Helper<'script, 'registry>) -> Result<Self::Target> {
+        dbg!(&self);
         let segments = self.segments.up(helper)?;
         let mut segments = segments.into_iter();
         if let Some(Segment::Id { mid, .. }) = segments.next() {
             let segments = segments.collect();
             let id = helper.meta.name_dflt(mid).clone();
             let mid = helper.add_meta_w_name(self.start, self.end, id.clone());
-            let mut module: Vec<String> = self.module.iter().map(|m| m.id.to_string()).collect();
+            let mut module_direct: Vec<String> =
+                self.module.iter().map(|m| m.id.to_string()).collect();
+            let mut module = helper.module.clone();
+            module.append(&mut module_direct);
             module.push(id.to_string());
+            dbg!(&module);
+            dbg!(&helper.consts);
             if let Some(idx) = helper.is_const(&module) {
                 Ok(LocalPath {
                     is_const: true,
