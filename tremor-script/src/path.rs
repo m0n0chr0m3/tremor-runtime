@@ -46,7 +46,11 @@ impl ModulePath {
 
 /// Load module path
 pub fn load_module_path() -> ModulePath {
-    if let Ok(value) = std::env::var("TREMOR_PATH") {
+    load_module_path_(std::env::var("TREMOR_PATH").ok())
+}
+
+fn load_module_path_(tremor_path: Option<String>) -> ModulePath {
+    if let Some(value) = tremor_path {
         let mounts: Vec<String> = value
             .split(":")
             .filter(|target| {
@@ -71,7 +75,7 @@ mod tests {
     #[test]
     fn test_default_module_path() {
         let empty: Vec<String> = vec![];
-        assert_eq!(empty, load_module_path().mounts)
+        assert_eq!(empty, load_module_path_(None).mounts)
     }
 
     #[test]
@@ -79,10 +83,10 @@ mod tests {
         use std::path::PathBuf;
         let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         d.push("tests/modules");
-        std::env::set_var("TREMOR_PATH", format!("{}", d.display()).as_str());
+        let tremor_path = format!("{}", d.display());
         let empty: Vec<String> = vec![];
 
-        let mp = load_module_path();
+        let mp = load_module_path_(Some(tremor_path));
         assert_ne!(empty, mp.mounts);
         assert_eq!(1, mp.mounts.len());
         assert_eq!(format!("{}", d.display()).to_string(), mp.mounts[0]);
@@ -102,13 +106,10 @@ mod tests {
         use std::path::PathBuf;
         let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         d.push("tests/modules");
-        std::env::set_var(
-            "TREMOR_PATH",
-            format!("{}:snot:badger:/horse", d.display()).as_str(),
-        );
+        let tremor_path = format!("{}:snot:badger:/horse", d.display());
         let empty: Vec<String> = vec![];
 
-        let mp = load_module_path();
+        let mp = load_module_path_(Some(tremor_path));
         assert_ne!(empty, mp.mounts);
         assert_eq!(1, mp.mounts.len());
         assert_eq!(format!("{}", d.display()).to_string(), mp.mounts[0]);
