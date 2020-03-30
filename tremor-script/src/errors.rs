@@ -21,6 +21,7 @@
 use crate::ast::{self, BaseExpr, Expr, Ident, NodeMetas};
 use crate::errors;
 use crate::lexer;
+use crate::path::ModulePath;
 use crate::pos;
 use crate::pos::{Location, Range};
 use base64;
@@ -167,6 +168,7 @@ impl ErrorKind {
             | MissingEffectors(outer, inner)
             | MissingFunction(outer, inner, _, _, _)
             | MissingModule(outer, inner, _, _)
+            | ModuleNotFound(outer, inner, _, _)
             | NoLocalsAllowed(outer, inner)
             | NoConstsAllowed(outer, inner)
             | RuntimeError(outer, inner, _, _, _, _)
@@ -193,6 +195,7 @@ impl ErrorKind {
             | Msg(_)
             | ParseIntError(_)
             | ParserError(_)
+            | PreprocessorError(_)
             | SerdeJSONError(_)
             | UnexpectedEndOfStream
             | Utf8Error(_)
@@ -369,7 +372,7 @@ error_chain! {
                 display("Runtime error in function {}::{}/{}: {}", m, f, a, c)
         }
         /*
-         * Lexer and Parser
+         * Lexer, Preprocessor and Parser
          */
         UnterminatedExtractor(expr: Range, inner: Range, extractor: String) {
             description("Unterminated extractor")
@@ -431,6 +434,22 @@ error_chain! {
                 display("An unexpected end of stream was found")
 
         }
+
+        /*
+         * Preprocessor
+         */
+         PreprocessorError(msg: String) {
+            description("Preprocessor due to user error")
+                display("Preprocessor due to user error: {}", msg)
+         }
+
+        ModuleNotFound(range: Range, loc: Range, resolved_relative_file_path: String, expected: Vec<String>) {
+            description("Module not found")
+                display("Module `{}` not found or not readable error in module path: {}",
+                resolved_relative_file_path.trim(),
+                expected.iter().map(|x| format!("\n\t\t\t - {}", x)).collect::<Vec<String>>().join(""))
+        }
+
 
         /*
          * Parser
