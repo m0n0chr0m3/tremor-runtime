@@ -113,6 +113,10 @@ where
     operators: Vec<OperatorDecl<'script>>,
     scripts: Vec<ScriptDecl<'script>>,
     aggregates: Vec<InvokeAggrFn<'script>>,
+    // TODO: Users of the `warnings` field might be helped if `warnings` were a Set. Right now,
+    // some places (twice in query/raw.rs) do `append + sort + dedup`. With, e.g., a `BTreeSet`,
+    // this could be achieved in a cleaner and faster way, and `Warning` already implements `Ord`
+    // anyway.
     warnings: Vec<Warning>,
     shadowed_vars: Vec<String>,
     pub locals: HashMap<String, usize>,
@@ -948,18 +952,12 @@ fn replace_last_shadow_use<'script>(replace_idx: usize, expr: Expr<'script>) -> 
         },
         Expr::Match(m) => {
             let mut m: Match<'script> = *m;
-            let mut patterns = vec![];
             // In each pattern we can replace the use in the last assign
-
-            for mut p in m.patterns {
-                //let mut p = p.clone();
+            for p in &mut m.patterns {
                 if let Some(expr) = p.exprs.pop() {
                     p.exprs.push(replace_last_shadow_use(replace_idx, expr))
                 }
-                patterns.push(p)
             }
-            m.patterns = patterns;
-            //p.patterns
             Expr::Match(Box::new(m))
         }
         other => other,
