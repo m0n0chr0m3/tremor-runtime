@@ -140,6 +140,7 @@ test_cases!(
     // regression
     empty_array_pattern,
     //INSERT
+    fn_extractors,
     mod_access_const,
     module,
     fn_fib,
