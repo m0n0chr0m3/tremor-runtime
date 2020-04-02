@@ -170,8 +170,9 @@ pub struct ModDoc<'script> {
     doc: Option<String>,
 }
 
-impl<'script> ToString for ModDoc<'script> {
-    fn to_string(&self) -> String {
+impl<'script> ModDoc<'script> {
+    /// Prints the module documentation
+    pub fn print_with_name(&self, name: &str) -> String {
         format!(
             r#"
 # {}
@@ -179,7 +180,7 @@ impl<'script> ToString for ModDoc<'script> {
 
 {}
         "#,
-            self.name,
+            name,
             &self.doc.clone().unwrap_or_default()
         )
     }

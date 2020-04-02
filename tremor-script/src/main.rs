@@ -158,7 +158,7 @@ fn main() -> Result<()> {
             Arg::with_name("docs")
                 .short("d")
                 .long("docs")
-                .takes_value(false)
+                .takes_value(true)
                 .help("Prints docs for a script."),
         )
         .get_matches();
@@ -251,13 +251,13 @@ fn main() -> Result<()> {
                         }
                     }
                 }
-            } else if matches.is_present("docs") {
+            } else if let Some(name) = matches.value_of("docs") {
                 let docs = runnable.docs();
                 let consts = &docs.consts;
                 let fns = &docs.fns;
 
                 if let Some(m) = &docs.module {
-                    println!("{}", m.to_string());
+                    println!("{}", m.print_with_name(name));
                 }
                 if !consts.is_empty() {
                     println!("## Constants");

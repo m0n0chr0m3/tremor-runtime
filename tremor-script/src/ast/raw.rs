@@ -123,6 +123,7 @@ impl<'script> ScriptRaw<'script> {
                 #[cfg_attr(tarpaulin, skip)]
                 ExprRaw::FnDecl(f) => {
                     helper.docs.fns.push(f.doc());
+
                     let f = f.up(&mut helper)?;
                     let f = CustomFn {
                         name: f.name.id,
@@ -155,7 +156,15 @@ impl<'script> ScriptRaw<'script> {
                 }
             }
         } else {
-            return Err(ErrorKind::EmptyScript.into());
+            let expr = EmitExpr {
+                mid: 0,
+                expr: ImutExprInt::Path(Path::Event(EventPath {
+                    mid: 0,
+                    segments: vec![],
+                })),
+                port: None,
+            };
+            exprs.push(Expr::Emit(Box::new(expr)))
         }
 
         helper.docs.module = Some(ModDoc {
@@ -164,6 +173,7 @@ impl<'script> ScriptRaw<'script> {
                 .doc
                 .map(|d| d.iter().map(|l| l.trim()).collect::<Vec<_>>().join("\n")),
         });
+
         Ok((
             Script {
                 imports: vec![], // Compiled out
@@ -211,7 +221,7 @@ impl<'script> ModuleRaw<'script> {
                     expr,
                     start,
                     end,
-                    comment,
+                    ..
                 } => {
                     let mut name_v = helper.module.clone();
                     name_v.push(name.to_string());
@@ -226,19 +236,11 @@ impl<'script> ModuleRaw<'script> {
                     helper.consts.insert(name_v.clone(), consts.len());
                     let expr = expr.up(helper)?;
                     let v = reduce2(expr, &helper)?;
-                    let value_type = v.value_type();
                     consts.push(v);
-                    helper.docs.consts.push(ConstDoc {
-                        name: name,
-                        doc: comment
-                            .map(|d| d.iter().map(|l| l.trim()).collect::<Vec<_>>().join("\n")),
-                        value_type,
-                    });
                 }
                 #[allow(unreachable_code, unused_variables)]
                 #[cfg_attr(tarpaulin, skip)]
                 ExprRaw::FnDecl(f) => {
-                    helper.docs.fns.push(f.doc());
                     let f = f.up(helper)?;
                     let f = CustomFn {
                         name: f.name.id,
