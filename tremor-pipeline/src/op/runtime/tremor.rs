@@ -99,6 +99,7 @@ impl Operator for Tremor {
                     if let Some(error) = unwind_event.as_object_mut() {
                         error.insert("event".into(), o);
                     } else {
+                        // ALLOW: we know this never happens since we swap the event three lines above
                         unreachable!();
                     };
                     "error".into()

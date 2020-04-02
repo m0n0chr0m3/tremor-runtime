@@ -128,7 +128,7 @@ impl<'script> ScriptRaw<'script> {
                         args: f.args.iter().map(|i| i.id.to_string()).collect(),
                         locals: f.locals,
                         body: f.body,
-                        is_const: false, // FIXME .unwrap()
+                        is_const: false, // FIXME we should find a way to examine this!
                         open: f.open,
                         inline: f.inline,
                     };
@@ -245,7 +245,7 @@ impl<'script> ModuleRaw<'script> {
                         args: f.args.iter().map(|i| i.id.to_string()).collect(),
                         locals: f.locals,
                         body: f.body,
-                        is_const: false, // FIXME .unwrap()
+                        is_const: false, // FIXME: we should find a way to examine this
                         open: f.open,
                         inline: f.inline,
                     };
