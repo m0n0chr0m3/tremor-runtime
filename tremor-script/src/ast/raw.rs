@@ -508,12 +508,8 @@ impl<'script> ImutExprInt<'script> {
                     let args: Result<Vec<Value<'script>>> =
                         i.args.into_iter().map(|v| reduce2(v.0, &helper)).collect();
                     let args = args?;
-                    let mut args2: Vec<&Value<'script>> = Vec::new();
-                    unsafe {
-                        for i in 0..args.len() {
-                            args2.push(args.get_unchecked(i));
-                        }
-                    }
+                    // Construct a view into `args`, since `invoke` expects a slice of references.
+                    let args2: Vec<&Value<'script>> = args.iter().collect();
                     let env = Env {
                         context: &EventContext::default(),
                         consts: &NO_CONSTS,
