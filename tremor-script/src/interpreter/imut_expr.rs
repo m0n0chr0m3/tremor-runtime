@@ -66,6 +66,7 @@ where
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     #[inline]
     pub fn run(
         &'script self,
@@ -152,7 +153,7 @@ where
                         self,
                         self,
                         &path,
-                        env.meta.name_dflt(*mid).to_string(),
+                        env.meta.name_dflt(*mid),
                         vec![],
                         &env.meta,
                     )

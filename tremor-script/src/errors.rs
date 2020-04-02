@@ -155,6 +155,7 @@ impl ErrorKind {
             | InvalidDrop(outer, inner)
             | InvalidEmit(outer, inner)
             | InvalidConst(outer, inner)
+            | InvalidMod(outer, inner)
             | InvalidFn(outer, inner)
             | AssignToConst(outer, inner, _)
             | DoubleConst(outer, inner, _)
@@ -504,7 +505,10 @@ error_chain! {
             description("Can't declare a const here")
                 display("Can't declare a const here")
         }
-
+        InvalidMod(expr: Range, inner: Range) {
+            description("Can't declare a module here")
+                display("Can't declare a module here")
+        }
         InvalidFn(expr: Range, inner: Range) {
             description("Can't declare a function here")
                 display("Can't declare a function here")
@@ -640,7 +644,7 @@ pub fn query_guard_not_bool<T, O: BaseExpr, I: BaseExpr>(
 pub(crate) fn error_generic<T, O: BaseExpr, I: BaseExpr, S: ToString>(
     outer: &O,
     inner: &I,
-    error: S,
+    error: &S,
     meta: &NodeMetas,
 ) -> Result<T> {
     Err(ErrorKind::Generic(outer.extent(meta), inner.extent(meta), error.to_string()).into())

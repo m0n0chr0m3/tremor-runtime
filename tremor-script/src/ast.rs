@@ -72,7 +72,7 @@ impl<'script> NodeMetas {
         &mut self,
         start: Location,
         end: Location,
-        name: S,
+        name: &S,
         compilation_unit_part: u64,
     ) -> usize
     where
@@ -107,7 +107,7 @@ impl<'script> NodeMetas {
     pub(crate) fn name_dflt(&self, idx: usize) -> String {
         self.name(idx)
             .cloned()
-            .unwrap_or_else(|| String::from("<UNKNOWN>").into())
+            .unwrap_or_else(|| String::from("<UNKNOWN>"))
     }
 }
 
@@ -262,7 +262,7 @@ where
         &mut self,
         start: Location,
         end: Location,
-        name: S,
+        name: &S,
         compilation_unit_part: u64,
     ) -> usize
     where
