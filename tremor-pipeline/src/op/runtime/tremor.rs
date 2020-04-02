@@ -63,11 +63,11 @@ pub struct Tremor {
 impl Operator for Tremor {
     fn on_event(
         &mut self,
-        _port: &str,
+        _in_port: &str,
         state: &mut Value<'static>,
         mut event: Event,
     ) -> Result<Vec<(Cow<'static, str>, Event)>> {
-        let port = {
+        let out_port = {
             let context = EventContext::new(event.ingest_ns, event.origin_uri);
             // This lifetimes will be `&'run mut Value<'event>` as that is the
             // requirement of the `self.runtime.run` we can not declare them
@@ -105,7 +105,7 @@ impl Operator for Tremor {
                 }
             }
         };
-        Ok(vec![(port, event)])
+        Ok(vec![(out_port, event)])
     }
 }
 
