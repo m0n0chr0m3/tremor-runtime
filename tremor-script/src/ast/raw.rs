@@ -46,7 +46,7 @@ impl<'script> ScriptRaw<'script> {
         self,
         reg: &'registry Registry,
         aggr_reg: &'registry AggrRegistry,
-    ) -> Result<(Script<'script>, Vec<Warning>)> {
+    ) -> Result<(Script<'script>, BTreeSet<Warning>)> {
         let mut helper = Helper::new(reg, aggr_reg);
         helper.consts.insert("window".to_owned(), WINDOW_CONST_ID);
         helper.consts.insert("group".to_owned(), GROUP_CONST_ID);
@@ -1192,11 +1192,11 @@ impl<'script> Upable<'script> for RecordPatternRaw<'script> {
             });
             if duplicated {
                 let extent = (self.start, self.end).into();
-                helper.warnings.push(Warning {
+                helper.warnings.insert(Warning {
                     inner: extent,
                     outer: extent.expand_lines(2),
                     msg: format!("The field {} is checked with both present and another extractor, this is redundant as extractors imply presence. It may also overwrite the result of th extractor.", present),
-                })
+                });
             }
         }
 
@@ -1210,11 +1210,11 @@ impl<'script> Upable<'script> for RecordPatternRaw<'script> {
             });
             if duplicated {
                 let extent = (self.start, self.end).into();
-                helper.warnings.push(Warning {
+                helper.warnings.insert(Warning {
                     inner: extent,
                     outer: extent.expand_lines(2),
                     msg: format!("The field {} is checked with both absence and another extractor, this test can never be true.", absent),
-                })
+                });
             }
         }
 
@@ -1592,18 +1592,21 @@ impl<'script> Upable<'script> for MatchRaw<'script> {
 
         let defaults = patterns.iter().filter(|p| p.pattern.is_default()).count();
         match defaults {
-            0 => helper.warnings.push(Warning{
-                outer: Range(self.start, self.end),
-                inner: Range(self.start, self.end),
-                msg: "This match expression has no default clause, if the other clauses do not cover all possibilities this will lead to events being discarded with runtime errors.".into()
-            }),
-            x if x > 1 => helper.warnings.push(Warning{
-                outer: Range(self.start, self.end),
-                inner: Range(self.start, self.end),
-                msg: "A match statement with more then one default clause will never reach any but the first default clause.".into()
-            }),
-
-            _ => ()
+            0 => {
+                helper.warnings.insert(Warning{
+                    outer: Range(self.start, self.end),
+                    inner: Range(self.start, self.end),
+                    msg: "This match expression has no default clause, if the other clauses do not cover all possibilities this will lead to events being discarded with runtime errors.".into()
+                });
+            }
+            x if x > 1 => {
+                helper.warnings.insert(Warning{
+                    outer: Range(self.start, self.end),
+                    inner: Range(self.start, self.end),
+                    msg: "A match statement with more then one default clause will never reach any but the first default clause.".into()
+                });
+            }
+            _ => (),
         }
 
         Ok(Match {
@@ -1629,18 +1632,21 @@ impl<'script> Upable<'script> for ImutMatchRaw<'script> {
         let patterns = self.patterns.up(helper)?;
         let defaults = patterns.iter().filter(|p| p.pattern.is_default()).count();
         match defaults {
-            0 => helper.warnings.push(Warning{
-                outer: Range(self.start, self.end),
-                inner: Range(self.start, self.end),
-                msg: "This match expression has no default clause, if the other clauses do not cover all possibilities this will lead to events being discarded with runtime errors.".into()
-            }),
-            x if x > 1 => helper.warnings.push(Warning{
-                outer: Range(self.start, self.end),
-                inner: Range(self.start, self.end),
-                msg: "A match statement with more then one default clause will never reach any but the first default clause.".into()
-            }),
-
-            _ => ()
+            0 => {
+                helper.warnings.insert(Warning{
+                    outer: Range(self.start, self.end),
+                    inner: Range(self.start, self.end),
+                    msg: "This match expression has no default clause, if the other clauses do not cover all possibilities this will lead to events being discarded with runtime errors.".into()
+                });
+            }
+            x if x > 1 => {
+                helper.warnings.insert(Warning{
+                    outer: Range(self.start, self.end),
+                    inner: Range(self.start, self.end),
+                    msg: "A match statement with more then one default clause will never reach any but the first default clause.".into()
+                });
+            }
+            _ => (),
         }
 
         Ok(ImutMatch {
@@ -1737,7 +1743,7 @@ impl<'script> Upable<'script> for InvokeAggrRaw<'script> {
             .into());
         }
         if let Some(warning) = invocable.warning() {
-            helper.warnings.push(Warning {
+            helper.warnings.insert(Warning {
                 inner: self.extent(&helper.meta),
                 outer: self.extent(&helper.meta),
                 msg: warning,

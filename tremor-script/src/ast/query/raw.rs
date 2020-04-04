@@ -18,6 +18,7 @@
 use super::super::raw::*;
 use super::*;
 use crate::impl_expr;
+use std::collections::BTreeSet;
 
 fn up_params<'script, 'registry>(
     params: WithExprsRaw<'script>,
@@ -46,7 +47,7 @@ impl<'script> QueryRaw<'script> {
         self,
         reg: &'registry Registry,
         aggr_reg: &'registry AggrRegistry,
-    ) -> Result<(Query<'script>, usize, Vec<Warning>)> {
+    ) -> Result<(Query<'script>, usize, BTreeSet<Warning>)> {
         let mut helper = Helper::new(reg, aggr_reg);
         Ok((
             Query {
@@ -179,8 +180,6 @@ impl<'script> Upable<'script> for ScriptDeclRaw<'script> {
         // Inject consts
         let (script, mut warnings) = self.script.up_script(helper.reg, helper.aggr_reg)?;
         helper.warnings.append(&mut warnings);
-        helper.warnings.sort();
-        helper.warnings.dedup();
         let script_decl = ScriptDecl {
             mid: helper.add_meta(self.start, self.end),
             id: self.id,
@@ -236,8 +235,6 @@ impl<'script> Upable<'script> for WindowDeclRaw<'script> {
             .transpose()?;
         if let Some((_, ref mut warnings)) = maybe_script {
             helper.warnings.append(warnings);
-            helper.warnings.sort();
-            helper.warnings.dedup();
         };
         Ok(WindowDecl {
             mid: helper.add_meta(self.start, self.end),

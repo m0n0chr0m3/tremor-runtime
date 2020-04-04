@@ -32,6 +32,7 @@ pub use query::*;
 use serde::Serialize;
 use simd_json::{prelude::*, BorrowedValue as Value, KnownKey};
 use std::borrow::{Borrow, Cow};
+use std::collections::BTreeSet;
 use std::mem;
 use upable::Upable;
 
@@ -113,11 +114,7 @@ where
     operators: Vec<OperatorDecl<'script>>,
     scripts: Vec<ScriptDecl<'script>>,
     aggregates: Vec<InvokeAggrFn<'script>>,
-    // TODO: Users of the `warnings` field might be helped if `warnings` were a Set. Right now,
-    // some places (twice in query/raw.rs) do `append + sort + dedup`. With, e.g., a `BTreeSet`,
-    // this could be achieved in a cleaner and faster way, and `Warning` already implements `Ord`
-    // anyway.
-    warnings: Vec<Warning>,
+    warnings: BTreeSet<Warning>,
     shadowed_vars: Vec<String>,
     pub locals: HashMap<String, usize>,
     pub consts: HashMap<String, usize>,
@@ -164,7 +161,7 @@ where
             operators: Vec::new(),
             scripts: Vec::new(),
             aggregates: Vec::new(),
-            warnings: Vec::new(),
+            warnings: BTreeSet::new(),
             locals: HashMap::new(),
             consts: HashMap::new(),
             shadowed_vars: Vec::new(),

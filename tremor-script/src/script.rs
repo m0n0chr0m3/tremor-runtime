@@ -24,6 +24,7 @@ use crate::pos::Range;
 use crate::registry::{Aggr as AggrRegistry, Registry};
 use serde::Serialize;
 use simd_json::borrowed::Value;
+use std::collections::BTreeSet;
 use std::io::Write;
 
 /// Return of a script execution
@@ -73,12 +74,12 @@ pub struct Script {
     // TODO: This should probably be pulled out to allow people wrapping it themselves
     pub(crate) script: rentals::Script,
     source: String,
-    warnings: Vec<Warning>,
+    warnings: BTreeSet<Warning>,
 }
 
 impl Script {
     /// Get script warnings
-    pub fn warnings(&self) -> &Vec<Warning> {
+    pub fn warnings(&self) -> &BTreeSet<Warning> {
         &self.warnings
     }
 }
@@ -112,7 +113,7 @@ where
     ) -> Result<Self> {
         let mut source = script.to_string();
 
-        let mut warnings = vec![];
+        let mut warnings = BTreeSet::new();
 
         // FIXME make lexer EOS tolerant to avoid this kludge
         source.push(' ');
@@ -161,10 +162,7 @@ where
 
     /// Format an error given a script source.
     pub fn format_warnings_with<H: Highlighter>(&self, h: &mut H) -> std::io::Result<()> {
-        let mut warnings = self.warnings.clone();
-        warnings.sort();
-        warnings.dedup();
-        for w in &warnings {
+        for w in &self.warnings {
             let tokens: Vec<_> = lexer::Tokenizer::new(&self.source).collect();
             h.highlight_runtime_error(tokens, w.outer.0, w.outer.1, Some(w.into()))?;
         }

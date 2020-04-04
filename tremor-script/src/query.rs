@@ -61,6 +61,7 @@ rental! {
 
 pub use rentals::Query as QueryRental;
 pub use rentals::Stmt as StmtRental;
+use std::collections::BTreeSet;
 
 #[cfg_attr(tarpaulin, skip)]
 impl PartialEq for rentals::Stmt {
@@ -86,7 +87,7 @@ pub struct Query {
     /// Source of the query
     pub source: String,
     /// Warnings emitted by the script
-    pub warnings: Vec<Warning>,
+    pub warnings: BTreeSet<Warning>,
     /// Number of local variables (should be 0)
     pub locals: usize,
 }
@@ -104,7 +105,7 @@ where
     pub fn parse(script: &'script str, reg: &Registry, aggr_reg: &AggrRegistry) -> Result<Self> {
         let mut source = script.to_string();
 
-        let mut warnings = vec![];
+        let mut warnings = BTreeSet::new();
         let mut locals = 0;
 
         // FIXME make lexer EOS tolerant to avoid this kludge
@@ -166,17 +167,14 @@ where
 
     /// Format an error given a script source.
     pub fn format_warnings_with<H: Highlighter>(&self, h: &mut H) -> std::io::Result<()> {
-        let mut warnings = self.warnings.clone();
-        warnings.sort();
-        warnings.dedup();
-        for w in &warnings {
+        for w in &self.warnings {
             let tokens: Vec<_> = lexer::Tokenizer::new(&self.source).collect();
             h.highlight_runtime_error(tokens, w.outer.0, w.outer.1, Some(w.into()))?;
         }
         h.finalize()
     }
-    /// Formats an error within this script
 
+    /// Formats an error within this script
     pub fn format_error(&self, e: &Error) -> String {
         let mut h = DumbHighlighter::default();
         if self.format_error_with(&mut h, &e).is_ok() {
