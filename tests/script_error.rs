@@ -132,6 +132,7 @@ test_cases!(
     pp_mod_not_found,
     unknown_function_in_function,
     mod_bound_cross,
+    mod_selfuse,
     //INSERT
 );
 

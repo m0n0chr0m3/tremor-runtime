@@ -1,0 +1,6 @@
+use m;
+
+fn fib(a, b, n) of
+  case (a, b, n) when n > 0 => recur(b, a + b, n - 1)
+  default => a
+end;
