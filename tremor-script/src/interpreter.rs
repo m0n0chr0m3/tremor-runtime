@@ -388,7 +388,6 @@ where
     'script: 'event,
     'event: 'run,
 {
-    let mut subrange: Option<(usize, usize)> = None;
     let mut current: &Value = match path {
         Path::Local(lpath) => match local.values.get(lpath.idx) {
             Some(Some(l)) => l,
@@ -407,13 +406,14 @@ where
         },
         Path::Const(lpath) => match env.consts.get(lpath.idx) {
             Some(v) => v,
-            _ => return error_oops(outer, "Use of uninitalized constant", &env.meta),
+            _ => return error_oops(outer, "Use of uninitialized constant", &env.meta),
         },
         Path::Meta(_path) => meta,
         Path::Event(_path) => event,
         Path::State(_path) => state,
     };
 
+    let mut subrange: Option<&[Value]> = None;
     for segment in path.segments() {
         match segment {
             Segment::Id { mid, key, .. } => {
@@ -436,26 +436,10 @@ where
             }
             Segment::Idx { idx, .. } => {
                 if let Some(a) = current.as_array() {
-                    let (start, end) = if let Some((start, end)) = subrange {
-                        // We check range on setting the subrange!
-                        (start, end)
-                    } else {
-                        (0, a.len())
-                    };
-                    let idx = *idx as usize + start;
-                    if idx >= end {
-                        // We exceed the sub range
-                        let bad_idx = idx - start;
-                        return error_array_out_of_bound(
-                            outer,
-                            segment,
-                            &path,
-                            bad_idx..bad_idx,
-                            &env.meta,
-                        );
-                    }
+                    let range_to_consider = subrange.unwrap_or(a.as_slice());
+                    let idx = *idx;
 
-                    if let Some(c) = a.get(idx) {
+                    if let Some(c) = range_to_consider.get(idx) {
                         current = c;
                         subrange = None;
                         continue;
@@ -497,26 +481,9 @@ where
                     }
                     (Value::Array(a), idx) => {
                         if let Some(idx) = idx.as_usize() {
-                            let (start, end) = if let Some((start, end)) = subrange {
-                                // We check range on setting the subrange!
-                                (start, end)
-                            } else {
-                                (0, a.len())
-                            };
-                            let idx = idx + start;
-                            if idx >= end {
-                                // We exceed the sub range
-                                let bad_idx = idx - start;
-                                return error_array_out_of_bound(
-                                    outer,
-                                    segment,
-                                    &path,
-                                    bad_idx..bad_idx,
-                                    &env.meta,
-                                );
-                            }
+                            let range_to_consider = subrange.unwrap_or(a.as_slice());
 
-                            if let Some(v) = a.get(idx) {
+                            if let Some(v) = range_to_consider.get(idx) {
                                 current = v;
                                 subrange = None;
                                 continue;
@@ -533,15 +500,13 @@ where
                             return error_need_int(outer, segment, idx.value_type(), &env.meta);
                         }
                     }
-                    (other, k) => {
-                        return if key.is_str() {
-                            error_need_obj(outer, segment, other.value_type(), &env.meta)
-                        } else if k.is_usize() {
-                            error_need_arr(outer, segment, other.value_type(), &env.meta)
-                        } else {
-                            error_oops(outer, "Bad path segments", &env.meta)
-                        }
+                    (other, key) if key.is_str() => {
+                        return error_need_obj(outer, segment, other.value_type(), &env.meta);
                     }
+                    (other, key) if key.is_usize() => {
+                        return error_need_arr(outer, segment, other.value_type(), &env.meta);
+                    }
+                    _ => return error_oops(outer, "Bad path segments", &env.meta),
                 }
             }
 
@@ -551,19 +516,15 @@ where
                 ..
             } => {
                 if let Some(a) = current.as_array() {
-                    let (start, end) = if let Some((start, end)) = subrange {
-                        // We check range on setting the subrange!
-                        (start, end)
-                    } else {
-                        (0, a.len())
-                    };
+                    let range_to_consider = subrange.unwrap_or(a.as_slice());
+
                     let s = stry!(range_start.run(opts, env, event, state, meta, local));
                     if let Some(range_start) = s.as_usize() {
-                        let range_start = range_start + start;
                         let e = stry!(range_end.run(opts, env, event, state, meta, local));
                         if let Some(range_end) = e.as_usize() {
-                            let range_end = range_end;
-                            if range_end > end {
+                            if range_end < range_start {
+                                todo!("error: range end cannot be smaller than range start");
+                            } else if range_end > range_to_consider.len() {
                                 return error_array_out_of_bound(
                                     outer,
                                     segment,
@@ -573,13 +534,31 @@ where
                                     &env.meta,
                                 );
                             } else {
-                                subrange = Some((range_start, range_end));
+                                subrange = Some(&range_to_consider[range_start..range_end]);
                                 continue;
                             }
+                        } else if e.is_i64() {
+                            // This is partially redundant: the check that
+                            // `range_end < range_start` will take care of most of this, except
+                            // for cases where `e`'s numeric value is positive, but too large to
+                            // fit in a `usize`.
+                            // Note for review: ideally, we'd use something like `is_integer()`
+                            // to give the best possible error message in this case, but no such
+                            // method exists on `Values` (and in `ValueTrait`). I'm using `is_i64`
+                            // as a compromise. Perhaps `is_i128` is better, but it ultimately
+                            // suffers the same problem. For JSON data, `i64` is plenty fine, but to
+                            // be really safe/future-proof, something more robust is needed.
+                            // TODO: Print the concrete value of `e` too?
+                            let re: &ImutExprInt = range_end.borrow();
+                            return error_need_pos_int(outer, re, e.value_type(), &env.meta);
                         } else {
                             let re: &ImutExprInt = range_end.borrow();
                             return error_need_int(outer, re, e.value_type(), &env.meta);
                         }
+                    } else if s.is_i64() {
+                        // TODO: Print the concrete value of `s` too?
+                        let rs: &ImutExprInt = range_start.borrow();
+                        return error_need_pos_int(outer, rs, s.value_type(), &env.meta);
                     } else {
                         let rs: &ImutExprInt = range_start.borrow();
                         return error_need_int(outer, rs.borrow(), s.value_type(), &env.meta);
@@ -590,14 +569,9 @@ where
             }
         }
     }
-    if let Some((start, end)) = subrange {
-        if let Some(a) = current.as_array() {
-            // We check the range whemn we set it;
-            let sub = unsafe { a.get_unchecked(start..end).to_vec() };
-            Ok(Cow::Owned(Value::Array(sub)))
-        } else {
-            error_need_arr(outer, outer, current.value_type(), &env.meta)
-        }
+
+    if let Some(range_to_consider) = subrange {
+        Ok(Cow::Owned(Value::Array(range_to_consider.to_vec())))
     } else {
         Ok(Cow::Borrowed(current))
     }

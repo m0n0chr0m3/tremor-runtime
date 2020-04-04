@@ -109,7 +109,9 @@ fn t2s(t: ValueType) -> &'static str {
         ValueType::Null => "null",
         ValueType::Bool => "boolean",
         ValueType::String => "string",
-        ValueType::I64 | ValueType::U64 => "integer",
+        // FIXME: Consistency with stdlib, which names both i64 and u64 "integer"!
+        ValueType::I64 => "integer",
+        ValueType::U64 => "positive integer",
         ValueType::F64 => "float",
         ValueType::Array => "array",
         ValueType::Object => "record",
@@ -468,12 +470,12 @@ error_chain! {
                 })
         }
         AssignIntoArray(expor: Range, inner: Range) {
-            description("Can not assign tinto a array")
+            description("Can not assign into an array")
                 display("It is not supported to assign value into an array")
         }
         InvalidAssign(expor: Range, inner: Range) {
             description("You can not assign that")
-                display("You are trying to assing to a value that isn't valid")
+                display("You are trying to assign to a value that isn't valid")
         }
         InvalidConst(expr: Range, inner: Range) {
             description("Can't declare a const here")
@@ -672,6 +674,16 @@ pub(crate) fn error_need_int<T, O: BaseExpr, I: BaseExpr>(
 ) -> Result<T> {
     error_type_conflict_mult(outer, inner, got, vec![ValueType::I64], meta)
 }
+
+pub(crate) fn error_need_pos_int<T, O: BaseExpr, I: BaseExpr>(
+    outer: &O,
+    inner: &I,
+    got: ValueType,
+    meta: &NodeMetas,
+) -> Result<T> {
+    error_type_conflict_mult(outer, inner, got, vec![ValueType::U64], meta)
+}
+
 pub(crate) fn error_type_conflict<T, O: BaseExpr, I: BaseExpr>(
     outer: &O,
     inner: &I,
