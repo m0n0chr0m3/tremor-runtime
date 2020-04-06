@@ -27,8 +27,12 @@ use lalrpop_util;
 use simd_json::prelude::*;
 use std::borrow::Cow;
 use std::collections::VecDeque;
+use std::ffi::OsStr;
 use std::fmt;
+use std::fs;
+use std::io::Read;
 use std::iter::Peekable;
+use std::path::{Path, PathBuf};
 use std::str::Chars;
 use unicode_xid::UnicodeXID;
 
@@ -748,13 +752,15 @@ macro_rules! take_while {
 }
 
 struct IncludeElement {
-    file_path: String,
+    file_path: Box<Path>,
 }
 
 impl IncludeElement {
-    fn from_file(file: &str) -> Result<Self> {
+    fn from_file(file: &Path) -> Result<Self> {
+        let mut p = PathBuf::new();
+        p.push(file);
         Ok(Self {
-            file_path: file.to_string(),
+            file_path: p.into_boxed_path(),
         })
     }
 }
@@ -766,7 +772,7 @@ impl PartialEq for IncludeElement {
 
 impl fmt::Display for IncludeElement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.file_path)
+        write!(f, "{}", self.file_path.to_string_lossy())
     }
 }
 
@@ -785,7 +791,7 @@ impl IncludeStack {
     fn pop(&mut self) {
         self.elements.pop();
     }
-    fn push(&mut self, file: &str) -> Result<()> {
+    fn push(&mut self, file: &Path) -> Result<()> {
         let e = IncludeElement::from_file(file)?;
         if self.contains(&e) {
             Err(format!(
@@ -813,25 +819,23 @@ impl<'input> Preprocessor {
         module_path: &ModulePath,
         use_span: Span,
         span2: Span,
-        rel_module_path: &str,
+        rel_module_path: &Path,
         include_stack: &mut IncludeStack,
-    ) -> Result<String> {
-        use std::path::Path;
-        let trickle = &format!("{}.trickle", rel_module_path);
-        let tremor = &format!("{}.tremor", rel_module_path);
+    ) -> Result<Box<Path>> {
+        let mut file = PathBuf::from(rel_module_path);
+        file.set_extension("tremor");
         // FIXME consider raw JSON: let json = Path::new(format!("{}.json", rel_module_path));
 
-        let test = module_path.resolve(tremor.trim());
-        if let Some(path) = test {
-            if Path::new(&path).is_file() {
+        if let Some(path) = module_path.resolve(&file) {
+            if path.is_file() {
                 include_stack.push(&path)?;
                 return Ok(path);
             }
         }
+        file.set_extension("trickle");
 
-        let test = module_path.resolve(trickle.trim());
-        if let Some(path) = test {
-            if Path::new(&path).is_file() {
+        if let Some(path) = module_path.resolve(&file) {
+            if path.is_file() {
                 include_stack.push(&path)?;
                 return Ok(path);
             }
@@ -840,21 +844,20 @@ impl<'input> Preprocessor {
         Err(ErrorKind::ModuleNotFound(
             Range::from((use_span.start, use_span.end)).expand_lines(2),
             Range::from((span2.start, span2.end)),
-            rel_module_path.to_string(),
+            rel_module_path.to_string_lossy().to_string(),
             module_path.mounts.clone(),
         )
         .into())
     }
 
     #[allow(clippy::too_many_lines)]
-    pub(crate) fn preprocess(
+    pub(crate) fn preprocess<S: AsRef<OsStr> + ?Sized>(
         module_path: &ModulePath,
-        file_name: &str,
+        file_name: &S,
         input: &'input mut std::string::String,
         include_stack: &mut IncludeStack,
     ) -> Result<Vec<Result<TokenSpan<'input>>>> {
-        use std::fs;
-        use std::io::Read;
+        let file_name = Path::new(file_name);
 
         input.push_str(" ");
 
@@ -876,7 +879,7 @@ impl<'input> Preprocessor {
                     span: use_span,
                     ..
                 })) => {
-                    let mut rel_module_path = String::new();
+                    let mut rel_module_path = PathBuf::new();
                     let mut alias = String::from("<NOMODULE>");
                     take_while!(next, Token::Whitespace(_), iter);
 
@@ -885,7 +888,8 @@ impl<'input> Preprocessor {
                         ..
                     })) = &next
                     {
-                        rel_module_path.push_str(&id);
+                        let id_str: &str = &id;
+                        rel_module_path.push(id_str);
                         alias = id.to_string();
 
                         take_while!(next, Token::Whitespace(_), iter);
@@ -903,8 +907,7 @@ impl<'input> Preprocessor {
 
                                 if let Some(Ok(Spanned { ref value, .. })) = next {
                                     if let Token::Ident(id, ..) = &value {
-                                        rel_module_path.push('/');
-                                        rel_module_path.push_str(&format!("{}", &id));
+                                        rel_module_path.push(&format!("{}", &id));
                                         alias = id.to_string();
                                         take_while!(next, Token::Whitespace(_), iter);
 
@@ -1099,7 +1102,7 @@ impl<'input> Preprocessor {
                                         s.push(' ');
                                         let s = Preprocessor::preprocess(
                                             &module_path,
-                                            &file_path,
+                                            file_path.as_os_str(),
                                             &mut s,
                                             include_stack,
                                         )?;
@@ -1108,9 +1111,15 @@ impl<'input> Preprocessor {
                                             .filter_map(|x| x.map(|x| format!("{}", x.value)).ok())
                                             .collect::<Vec<String>>()
                                             .join("");
-                                        input.push_str(&format!("#!line 0 0 0 {}\n", &file_path2));
+                                        input.push_str(&format!(
+                                            "#!line 0 0 0 {}\n",
+                                            &file_path2.to_string_lossy()
+                                        ));
                                         input.push_str(&format!("mod {} with\n", &alias));
-                                        input.push_str(&format!("#!line 0 0 0 {}\n", &file_path2));
+                                        input.push_str(&format!(
+                                            "#!line 0 0 0 {}\n",
+                                            &file_path2.to_string_lossy()
+                                        ));
                                         input.push_str(&format!("{}\n", y.trim()));
                                         input.push_str("end;\n");
                                         input.push_str(&format!(
@@ -1118,7 +1127,7 @@ impl<'input> Preprocessor {
                                             span2.end.absolute,
                                             span2.end.line + 1,
                                             0,
-                                            file_name,
+                                            file_name.to_string_lossy(),
                                         ));
                                     }
                                 }
