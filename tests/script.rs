@@ -142,6 +142,7 @@ test_cases!(
     // TODO
     // const_in_const_lookup,
     //INSERT
+    escape_in_extractor,
     const_of_const,
     fn_extractors,
     mod_access_const,
