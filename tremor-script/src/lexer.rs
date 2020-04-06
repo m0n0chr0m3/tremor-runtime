@@ -747,8 +747,75 @@ macro_rules! take_while {
     };
 }
 
+struct IncludeElement {
+    file_path: String,
+}
+
+impl IncludeElement {
+    fn from_file(file: &str) -> Result<Self> {
+        Ok(Self {
+            file_path: file.to_string(),
+        })
+    }
+}
+impl PartialEq for IncludeElement {
+    fn eq(&self, other: &Self) -> bool {
+        self.file_path == other.file_path
+    }
+}
+
+impl fmt::Display for IncludeElement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.file_path)
+    }
+}
+
+pub(crate) struct IncludeStack {
+    elements: Vec<IncludeElement>,
+}
+impl Default for IncludeStack {
+    fn default() -> Self {
+        Self {
+            elements: Vec::new(),
+        }
+    }
+}
+
+impl IncludeStack {
+    fn pop(&mut self) {
+        self.elements.pop();
+    }
+    fn push(&mut self, file: &str) -> Result<()> {
+        let e = IncludeElement::from_file(file)?;
+        if self.contains(&e) {
+            Err(format!(
+                "Cyclec dependency detected: {} -> {}",
+                self.elements
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<String>>()
+                    .join(" -> "),
+                e.to_string()
+            )
+            .into())
+        } else {
+            self.elements.push(IncludeElement::from_file(file)?);
+            Ok(())
+        }
+    }
+    fn contains(&self, e: &IncludeElement) -> bool {
+        self.elements.contains(e)
+    }
+}
+
 impl<'input> Preprocessor {
-    pub(crate) fn resolve(module_path: &ModulePath, rel_module_path: &str) -> Option<String> {
+    pub(crate) fn resolve(
+        module_path: &ModulePath,
+        use_span: Span,
+        span2: Span,
+        rel_module_path: &str,
+        include_stack: &mut IncludeStack,
+    ) -> Result<String> {
         use std::path::Path;
         let trickle = &format!("{}.trickle", rel_module_path);
         let tremor = &format!("{}.tremor", rel_module_path);
@@ -757,18 +824,26 @@ impl<'input> Preprocessor {
         let test = module_path.resolve(tremor.trim());
         if let Some(path) = test {
             if Path::new(&path).is_file() {
-                return Some(path);
+                include_stack.push(&path)?;
+                return Ok(path);
             }
         }
 
         let test = module_path.resolve(trickle.trim());
         if let Some(path) = test {
             if Path::new(&path).is_file() {
-                return Some(path);
+                include_stack.push(&path)?;
+                return Ok(path);
             }
         }
 
-        None
+        Err(ErrorKind::ModuleNotFound(
+            Range::from((use_span.start, use_span.end)).expand_lines(2),
+            Range::from((span2.start, span2.end)),
+            rel_module_path.to_string(),
+            module_path.mounts.clone(),
+        )
+        .into())
     }
 
     #[allow(clippy::too_many_lines)]
@@ -776,6 +851,7 @@ impl<'input> Preprocessor {
         module_path: &ModulePath,
         file_name: &str,
         input: &'input mut std::string::String,
+        include_stack: &mut IncludeStack,
     ) -> Result<Vec<Result<TokenSpan<'input>>>> {
         use std::fs;
         use std::io::Read;
@@ -1005,65 +1081,54 @@ impl<'input> Preprocessor {
                         ..
                     })) = next
                     {
-                        let file_path = rel_module_path.clone();
-                        if let Some(file_path) =
-                            Preprocessor::resolve(module_path, &rel_module_path)
-                        {
-                            let file_path2 = file_path.clone();
+                        //let file_path = rel_module_path.clone();
+                        let file_path = Preprocessor::resolve(
+                            module_path,
+                            use_span,
+                            span2,
+                            &rel_module_path,
+                            include_stack,
+                        )?;
+                        let file_path2 = file_path.clone();
 
-                            match fs::File::open(&file_path) {
-                                Ok(mut file) => {
-                                    let mut s = String::new();
-                                    match file.read_to_string(&mut s) {
-                                        _size => {
-                                            s.push(' ');
-                                            let s = Preprocessor::preprocess(
-                                                &module_path,
-                                                &file_path,
-                                                &mut s,
-                                            )?;
-                                            let y = s
-                                                .into_iter()
-                                                .filter_map(|x| {
-                                                    x.map(|x| format!("{}", x.value)).ok()
-                                                })
-                                                .collect::<Vec<String>>()
-                                                .join("");
-                                            input.push_str(&format!(
-                                                "#!line 0 0 0 {}\n",
-                                                &file_path2
-                                            ));
-                                            input.push_str(&format!("mod {} with\n", &alias));
-                                            input.push_str(&format!(
-                                                "#!line 0 0 0 {}\n",
-                                                &file_path2
-                                            ));
-                                            input.push_str(&format!("{}\n", y.trim()));
-                                            input.push_str("end;\n");
-                                            input.push_str(&format!(
-                                                "#!line {} {} {} {}\n",
-                                                span2.end.absolute,
-                                                span2.end.line + 1,
-                                                0,
-                                                file_name,
-                                            ));
-                                        }
+                        match fs::File::open(&file_path) {
+                            Ok(mut file) => {
+                                let mut s = String::new();
+                                match file.read_to_string(&mut s) {
+                                    _size => {
+                                        s.push(' ');
+                                        let s = Preprocessor::preprocess(
+                                            &module_path,
+                                            &file_path,
+                                            &mut s,
+                                            include_stack,
+                                        )?;
+                                        let y = s
+                                            .into_iter()
+                                            .filter_map(|x| x.map(|x| format!("{}", x.value)).ok())
+                                            .collect::<Vec<String>>()
+                                            .join("");
+                                        input.push_str(&format!("#!line 0 0 0 {}\n", &file_path2));
+                                        input.push_str(&format!("mod {} with\n", &alias));
+                                        input.push_str(&format!("#!line 0 0 0 {}\n", &file_path2));
+                                        input.push_str(&format!("{}\n", y.trim()));
+                                        input.push_str("end;\n");
+                                        input.push_str(&format!(
+                                            "#!line {} {} {} {}\n",
+                                            span2.end.absolute,
+                                            span2.end.line + 1,
+                                            0,
+                                            file_name,
+                                        ));
                                     }
-                                    file.read_to_string(&mut s)?;
                                 }
-                                Err(e) => {
-                                    return Err(e.into());
-                                }
+                                file.read_to_string(&mut s)?;
                             }
-                        } else {
-                            return Err(ErrorKind::ModuleNotFound(
-                                Range::from((use_span.start, use_span.end)).expand_lines(2),
-                                Range::from((span2.start, span2.end)),
-                                file_path,
-                                module_path.mounts.clone(),
-                            )
-                            .into());
+                            Err(e) => {
+                                return Err(e.into());
+                            }
                         }
+                        include_stack.pop();
                     } else if let Some(Ok(Spanned {
                         value: bad_token,
                         span,
@@ -2238,7 +2303,13 @@ mod tests {
         let mut snot = "match %{ test ~= base64|| } of default => \"badger\" end ".to_string();
         let mut snot2 = snot.clone();
         let badger: Vec<_> = Tokenizer::new(&mut snot).collect();
-        let badger2 = Preprocessor::preprocess(&ModulePath { mounts: vec![] }, "foo", &mut snot2)?;
+        let mut include_stack = IncludeStack::default();
+        let badger2 = Preprocessor::preprocess(
+            &ModulePath { mounts: vec![] },
+            "foo",
+            &mut snot2,
+            &mut include_stack,
+        )?;
         let mut res = String::new();
         for b in badger
             .into_iter()
