@@ -377,7 +377,7 @@ where
                             if let Some(l) = d {
                                 return Ok(Cow::Borrowed(l));
                             } else {
-                                return error_oops(self, "Unreacable code", &env.meta);
+                                return error_oops(self, 0xdead0009, "Unreacable code", &env.meta);
                             }
                         }
                         return error_bad_key(
@@ -390,7 +390,7 @@ where
                         );
                     }
 
-                    _ => return error_oops(self, "Unknown local varialbe", &env.meta),
+                    _ => return error_oops(self, 0xdead000a, "Unknown local varialbe", &env.meta),
                 },
                 Path::Meta(_path) => {
                     if segments.is_empty() {
@@ -523,6 +523,7 @@ where
                     } else {
                         return error_oops(
                             self,
+                            0xdead000c,
                             "Unknown local variable in Expr::AssignMoveLocal",
                             &env.meta,
                         );
@@ -530,6 +531,7 @@ where
                 } else {
                     return error_oops(
                         self,
+                        0xdead000b,
                         "Unknown local variable in Expr::AssignMoveLocal",
                         &env.meta,
                     );
