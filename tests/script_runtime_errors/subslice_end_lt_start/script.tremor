@@ -1,1 +1,2 @@
-event[2:1]
+let k = 1;
+event[2:k]

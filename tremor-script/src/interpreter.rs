@@ -388,7 +388,9 @@ where
     'script: 'event,
     'event: 'run,
 {
-    let mut current: &Value = match path {
+    // Fetch the base of the path
+    // TODO: Extract this into a method on `Path`?
+    let base_value: &Value = match path {
         Path::Local(lpath) => match local.values.get(lpath.idx) {
             Some(Some(l)) => l,
             Some(None) => {
@@ -413,9 +415,12 @@ where
         Path::State(_path) => state,
     };
 
+    // Resolve the targeted value by applying all path segments
     let mut subrange: Option<&[Value]> = None;
+    let mut current = base_value;
     for segment in path.segments() {
         match segment {
+            // Next segment is an identifier: lookup the identifier on `current`, if it's an object
             Segment::Id { mid, key, .. } => {
                 if let Some(c) = key.lookup(current) {
                     current = c;
@@ -434,6 +439,7 @@ where
                     return error_need_obj(outer, segment, current.value_type(), &env.meta);
                 }
             }
+            // Next segment is an index: index into `current`, if it's an array
             Segment::Idx { idx, .. } => {
                 if let Some(a) = current.as_array() {
                     let range_to_consider = subrange.unwrap_or(a.as_slice());
@@ -449,6 +455,7 @@ where
                             segment,
                             &path,
                             idx..idx,
+                            range_to_consider.len(),
                             &env.meta,
                         );
                     }
@@ -456,10 +463,76 @@ where
                     return error_need_arr(outer, segment, current.value_type(), &env.meta);
                 }
             }
+            // Next segment is an index range: index into `current`, if it's an array
+            Segment::Range {
+                range_start,
+                range_end,
+                ..
+            } => {
+                if let Some(a) = current.as_array() {
+                    let range_to_consider = subrange.unwrap_or(a.as_slice());
+
+                    // Helper closure for evaluating an expression to an `usize` index
+                    let as_index = |expr: &ImutExprInt| -> Result<usize> {
+                        let val = stry!(expr.run(opts, env, event, state, meta, local));
+                        if let Some(n) = val.as_usize() {
+                            Ok(n)
+                        } else if val.is_i64() {
+                            // TODO: Receive reviewer feedback.
+                            // Note for review: ideally, we'd use something like `is_integer()`
+                            // to give the best possible error message in this case, but no such
+                            // method exists on `Values` (and in `ValueTrait`). I'm using `is_i64`
+                            // as a compromise. Perhaps `is_i128` is better, but it ultimately
+                            // suffers the same problem. For JSON data, `i64` is plenty fine, but to
+                            // be really safe/future-proof, something more robust is needed.
+                            error_bad_array_index(
+                                outer,
+                                expr,
+                                &path,
+                                val.borrow(),
+                                range_to_consider.len(),
+                                &env.meta,
+                            )
+                        } else {
+                            error_need_int(outer, expr, val.value_type(), &env.meta)
+                        }
+                    };
+
+                    let range_start = as_index(range_start)?;
+                    let range_end = as_index(range_end)?;
+
+                    if range_end < range_start {
+                        return error_decreasing_range(
+                            outer,
+                            segment,
+                            &path,
+                            range_start,
+                            range_end,
+                            &env.meta,
+                        );
+                    } else if range_end > range_to_consider.len() {
+                        return error_array_out_of_bound(
+                            outer,
+                            segment,
+                            &path,
+                            range_start..range_end,
+                            range_to_consider.len(),
+                            &env.meta,
+                        );
+                    } else {
+                        subrange = Some(&range_to_consider[range_start..range_end]);
+                        continue;
+                    }
+                } else {
+                    return error_need_arr(outer, segment, current.value_type(), &env.meta);
+                }
+            }
+            // Next segment is an expression: run `expr` to know which key it signifies at runtime
             Segment::Element { expr, .. } => {
                 let key = stry!(expr.run(opts, env, event, state, meta, local));
 
                 match (current, key.borrow()) {
+                    // The segment resolved to an identifier, and `current` is an object: lookup
                     (Value::Object(o), Value::String(id)) => {
                         if let Some(v) = o.get(id) {
                             current = v;
@@ -476,9 +549,11 @@ where
                             );
                         }
                     }
+                    // The segment did not resolve to an identifier, but `current` is an object: err
                     (Value::Object(_), other) => {
                         return error_need_str(outer, segment, other.value_type(), &env.meta)
                     }
+                    // If `current` is an array, the segment has to be an index
                     (Value::Array(a), idx) => {
                         if let Some(idx) = idx.as_usize() {
                             let range_to_consider = subrange.unwrap_or(a.as_slice());
@@ -493,6 +568,7 @@ where
                                     segment,
                                     &path,
                                     idx..idx,
+                                    range_to_consider.len(),
                                     &env.meta,
                                 );
                             }
@@ -500,71 +576,16 @@ where
                             return error_need_int(outer, segment, idx.value_type(), &env.meta);
                         }
                     }
+                    // The segment resolved to an identifier, but `current` isn't an object: err
                     (other, key) if key.is_str() => {
                         return error_need_obj(outer, segment, other.value_type(), &env.meta);
                     }
+                    // The segment resolved to an index, but `current` isn't an array: err
                     (other, key) if key.is_usize() => {
                         return error_need_arr(outer, segment, other.value_type(), &env.meta);
                     }
+                    // Anything else: err
                     _ => return error_oops(outer, "Bad path segments", &env.meta),
-                }
-            }
-
-            Segment::Range {
-                range_start,
-                range_end,
-                ..
-            } => {
-                if let Some(a) = current.as_array() {
-                    let range_to_consider = subrange.unwrap_or(a.as_slice());
-
-                    let s = stry!(range_start.run(opts, env, event, state, meta, local));
-                    if let Some(range_start) = s.as_usize() {
-                        let e = stry!(range_end.run(opts, env, event, state, meta, local));
-                        if let Some(range_end) = e.as_usize() {
-                            if range_end < range_start {
-                                todo!("error: range end cannot be smaller than range start");
-                            } else if range_end > range_to_consider.len() {
-                                return error_array_out_of_bound(
-                                    outer,
-                                    segment,
-                                    &path,
-                                    // Compensate for range inclusiveness
-                                    range_start..(range_end - 1),
-                                    &env.meta,
-                                );
-                            } else {
-                                subrange = Some(&range_to_consider[range_start..range_end]);
-                                continue;
-                            }
-                        } else if e.is_i64() {
-                            // This is partially redundant: the check that
-                            // `range_end < range_start` will take care of most of this, except
-                            // for cases where `e`'s numeric value is positive, but too large to
-                            // fit in a `usize`.
-                            // Note for review: ideally, we'd use something like `is_integer()`
-                            // to give the best possible error message in this case, but no such
-                            // method exists on `Values` (and in `ValueTrait`). I'm using `is_i64`
-                            // as a compromise. Perhaps `is_i128` is better, but it ultimately
-                            // suffers the same problem. For JSON data, `i64` is plenty fine, but to
-                            // be really safe/future-proof, something more robust is needed.
-                            // TODO: Print the concrete value of `e` too?
-                            let re: &ImutExprInt = range_end.borrow();
-                            return error_need_pos_int(outer, re, e.value_type(), &env.meta);
-                        } else {
-                            let re: &ImutExprInt = range_end.borrow();
-                            return error_need_int(outer, re, e.value_type(), &env.meta);
-                        }
-                    } else if s.is_i64() {
-                        // TODO: Print the concrete value of `s` too?
-                        let rs: &ImutExprInt = range_start.borrow();
-                        return error_need_pos_int(outer, rs, s.value_type(), &env.meta);
-                    } else {
-                        let rs: &ImutExprInt = range_start.borrow();
-                        return error_need_int(outer, rs.borrow(), s.value_type(), &env.meta);
-                    }
-                } else {
-                    return error_need_arr(outer, segment, current.value_type(), &env.meta);
                 }
             }
         }
