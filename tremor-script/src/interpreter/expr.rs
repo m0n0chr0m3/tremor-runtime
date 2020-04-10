@@ -14,7 +14,7 @@
 
 use super::{
     merge_values, patch_value, resolve, set_local_shadow, test_guard, test_predicate_expr, Env,
-    ExecOpts, LocalStack, NULL,
+    ExecOpts, InterpreterContext, LocalStack, NULL,
 };
 use crate::ast::*;
 use crate::errors::*;
@@ -91,12 +91,7 @@ where
         for predicate in &expr.patterns {
             if stry!(test_predicate_expr(
                 self,
-                opts,
-                env,
-                event,
-                state,
-                meta,
-                local,
+                InterpreterContext::of(opts, env, event, state, meta, local),
                 &target,
                 &predicate.pattern,
                 &predicate.guard,
@@ -133,7 +128,10 @@ where
         let v: &Value = value.borrow();
         let v: &mut Value = unsafe { mem::transmute(v) };
         stry!(patch_value(
-            self, opts, env, event, state, meta, local, v, expr
+            self,
+            InterpreterContext::of(opts, env, event, state, meta, local),
+            v,
+            expr
         ));
         Ok(Cow::Borrowed(v))
     }
@@ -156,7 +154,7 @@ where
         let value: &mut Value = unsafe { mem::transmute(value) };
 
         if value.is_object() {
-            let replacement = stry!(expr.expr.run(opts, env, event, state, meta, local,));
+            let replacement = stry!(expr.expr.run(opts, env, event, state, meta, local));
 
             if replacement.is_object() {
                 stry!(merge_values(self, &expr.expr, value, &replacement));
@@ -197,17 +195,13 @@ where
             // mutation in the future we could get rid of this.
 
             'comprehension_outer: for (k, v) in target_map.clone() {
-                stry!(set_local_shadow(
-                    self,
-                    local,
-                    &env.meta,
-                    expr.key_id,
-                    Value::String(k)
-                ));
-                stry!(set_local_shadow(self, local, &env.meta, expr.val_id, v));
+                set_local_shadow(self, local, &env.meta, expr.key_id, Value::String(k))?;
+                set_local_shadow(self, local, &env.meta, expr.val_id, v)?;
                 for e in cases {
                     if stry!(test_guard(
-                        self, opts, env, event, state, meta, local, &e.guard
+                        self,
+                        InterpreterContext::of(opts, env, event, state, meta, local),
+                        &e.guard
                     )) {
                         let v = demit!(self
                             .execute_effectors(opts, env, event, state, meta, local, e, &e.exprs,));
@@ -235,18 +229,14 @@ where
 
             let mut count = 0;
             'comp_array_outer: for x in target_array.clone() {
-                stry!(set_local_shadow(
-                    self,
-                    local,
-                    &env.meta,
-                    expr.key_id,
-                    count.into()
-                ));
-                stry!(set_local_shadow(self, local, &env.meta, expr.val_id, x));
+                set_local_shadow(self, local, &env.meta, expr.key_id, count.into())?;
+                set_local_shadow(self, local, &env.meta, expr.val_id, x)?;
 
                 for e in cases {
                     if stry!(test_guard(
-                        self, opts, env, event, state, meta, local, &e.guard
+                        self,
+                        InterpreterContext::of(opts, env, event, state, meta, local),
+                        &e.guard
                     )) {
                         let v = demit!(self
                             .execute_effectors(opts, env, event, state, meta, local, e, &e.exprs,));
@@ -379,6 +369,7 @@ where
             }
         };
 
+        let ictx = InterpreterContext::of(opts, env, event, state, meta, local);
         for segment in segments {
             unsafe {
                 match segment {
@@ -393,15 +384,14 @@ where
                         };
                     }
                     Segment::Element { expr, .. } => {
-                        let id = stry!(expr.eval_to_string(opts, env, event, state, meta, local));
+                        let id = stry!(expr.eval_to_string(ictx));
                         let v: &mut Value = mem::transmute(current);
                         if let Some(map) = v.as_object_mut() {
                             current = if let Some(v) = map.get_mut(&id) {
                                 v
                             } else {
-                                map.insert(id.clone(), Value::from(Object::with_capacity(32)));
-                                // ALLOW: this is safe because we just added this element to the map.
-                                map.get_mut(&id).unwrap_or_else(|| unreachable!())
+                                map.entry(id.clone())
+                                    .or_insert_with(|| Value::from(Object::with_capacity(32)))
                             }
                         } else {
                             return error_need_obj(self, segment, current.value_type(), &env.meta);
@@ -418,7 +408,7 @@ where
         }
         if opts.result_needed {
             //Ok(Cow::Borrowed(current))
-            resolve(self, opts, env, event, state, meta, local, path)
+            resolve(self, ictx, path)
         } else {
             Ok(Cow::Borrowed(&NULL))
         }
@@ -443,8 +433,10 @@ where
                 } if segments.is_empty() => {
                     let port = if let Some(port) = port {
                         Some(
-                            stry!(port.eval_to_string(opts, env, event, state, meta, local))
-                                .to_string(),
+                            stry!(port.eval_to_string(InterpreterContext::of(
+                                opts, env, event, state, meta, local,
+                            )))
+                            .to_string(),
                         )
                     } else {
                         None
@@ -454,8 +446,10 @@ where
                 expr => {
                     let port = if let Some(port) = &expr.port {
                         Some(
-                            stry!(port.eval_to_string(opts, env, event, state, meta, local))
-                                .to_string(),
+                            stry!(port.eval_to_string(InterpreterContext::of(
+                                opts, env, event, state, meta, local,
+                            )))
+                            .to_string(),
                         )
                     } else {
                         None
