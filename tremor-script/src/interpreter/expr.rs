@@ -91,7 +91,8 @@ where
         for predicate in &expr.patterns {
             if stry!(test_predicate_expr(
                 self,
-                InterpreterContext::of(opts, env, event, state, meta, local),
+                opts,
+                InterpreterContext::of(env, event, state, meta, local),
                 &target,
                 &predicate.pattern,
                 &predicate.guard,
@@ -129,7 +130,8 @@ where
         let v: &mut Value = unsafe { mem::transmute(v) };
         stry!(patch_value(
             self,
-            InterpreterContext::of(opts, env, event, state, meta, local),
+            opts,
+            InterpreterContext::of(env, event, state, meta, local),
             v,
             expr
         ));
@@ -200,7 +202,8 @@ where
                 for e in cases {
                     if stry!(test_guard(
                         self,
-                        InterpreterContext::of(opts, env, event, state, meta, local),
+                        opts,
+                        InterpreterContext::of(env, event, state, meta, local),
                         &e.guard
                     )) {
                         let v = demit!(self
@@ -235,7 +238,8 @@ where
                 for e in cases {
                     if stry!(test_guard(
                         self,
-                        InterpreterContext::of(opts, env, event, state, meta, local),
+                        opts,
+                        InterpreterContext::of(env, event, state, meta, local),
                         &e.guard
                     )) {
                         let v = demit!(self
@@ -369,7 +373,7 @@ where
             }
         };
 
-        let ictx = InterpreterContext::of(opts, env, event, state, meta, local);
+        let ictx = InterpreterContext::of(env, event, state, meta, local);
         for segment in segments {
             unsafe {
                 match segment {
@@ -384,7 +388,7 @@ where
                         };
                     }
                     Segment::Element { expr, .. } => {
-                        let id = stry!(expr.eval_to_string(ictx));
+                        let id = stry!(expr.eval_to_string(opts, ictx));
                         let v: &mut Value = mem::transmute(current);
                         if let Some(map) = v.as_object_mut() {
                             current = if let Some(v) = map.get_mut(&id) {
@@ -408,7 +412,7 @@ where
         }
         if opts.result_needed {
             //Ok(Cow::Borrowed(current))
-            resolve(self, ictx, path)
+            resolve(self, opts, ictx, path)
         } else {
             Ok(Cow::Borrowed(&NULL))
         }
@@ -433,9 +437,10 @@ where
                 } if segments.is_empty() => {
                     let port = if let Some(port) = port {
                         Some(
-                            stry!(port.eval_to_string(InterpreterContext::of(
-                                opts, env, event, state, meta, local,
-                            )))
+                            stry!(port.eval_to_string(
+                                opts,
+                                InterpreterContext::of(env, event, state, meta, local,)
+                            ))
                             .to_string(),
                         )
                     } else {
@@ -446,9 +451,10 @@ where
                 expr => {
                     let port = if let Some(port) = &expr.port {
                         Some(
-                            stry!(port.eval_to_string(InterpreterContext::of(
-                                opts, env, event, state, meta, local,
-                            )))
+                            stry!(port.eval_to_string(
+                                opts,
+                                InterpreterContext::of(env, event, state, meta, local,)
+                            ))
                             .to_string(),
                         )
                     } else {

@@ -130,7 +130,6 @@ impl ExecOpts {
 #[allow(missing_docs)] // FIXME: Don't approve a PR with this line! ;)
 #[derive(Clone, Copy)]
 pub struct InterpreterContext<'run, 'event, 'script> {
-    pub opts: ExecOpts,
     pub env: &'run Env<'run, 'event, 'script>,
     pub event: &'run Value<'event>,
     pub state: &'run Value<'static>,
@@ -139,9 +138,8 @@ pub struct InterpreterContext<'run, 'event, 'script> {
 }
 
 impl<'run, 'event, 'script> InterpreterContext<'run, 'event, 'script> {
-    /// Groups all six fields into a struct
+    /// Groups all five fields into a struct
     pub fn of(
-        opts: ExecOpts,
         env: &'run Env<'run, 'event, 'script>,
         event: &'run Value<'event>,
         state: &'run Value<'static>,
@@ -149,26 +147,11 @@ impl<'run, 'event, 'script> InterpreterContext<'run, 'event, 'script> {
         local: &'run LocalStack<'event>,
     ) -> Self {
         InterpreterContext {
-            opts,
             env,
             event,
             state,
             meta,
             local,
-        }
-    }
-
-    fn with_result(self) -> Self {
-        InterpreterContext {
-            opts: self.opts.with_result(),
-            ..self
-        }
-    }
-
-    fn without_result(self) -> Self {
-        InterpreterContext {
-            opts: self.opts.without_result(),
-            ..self
         }
     }
 }
@@ -422,6 +405,7 @@ pub(crate) fn exec_unary<'run, 'event: 'run>(
 #[allow(clippy::too_many_lines)]
 pub(crate) fn resolve<'run, 'event, 'script, Expr>(
     outer: &'script Expr,
+    opts: ExecOpts,
     ictx: InterpreterContext<'run, 'event, 'script>,
     path: &'script Path,
 ) -> Result<Cow<'run, Value<'event>>>
@@ -516,7 +500,7 @@ where
 
                     // Helper closure for evaluating an expression to an `usize` index
                     let as_index = |expr: &ImutExprInt| -> Result<usize> {
-                        let val = stry!(expr.run_with_context(ictx));
+                        let val = stry!(expr.run_with_context(opts, ictx));
                         if let Some(n) = val.as_usize() {
                             Ok(n)
                         } else if val.is_i64() {
@@ -571,7 +555,7 @@ where
             }
             // Next segment is an expression: run `expr` to know which key it signifies at runtime
             Segment::Element { expr, .. } => {
-                let key = stry!(expr.run_with_context(ictx));
+                let key = stry!(expr.run_with_context(opts, ictx));
 
                 match (current, key.borrow()) {
                     // The segment resolved to an identifier, and `current` is an object: lookup
@@ -680,6 +664,7 @@ where
 #[inline]
 fn patch_value<'run, 'event, 'script, Expr>(
     _outer: &'script Expr,
+    opts: ExecOpts,
     ictx: InterpreterContext<'run, 'event, 'script>,
     value: &'run mut Value<'event>,
     expr: &'script Patch,
@@ -696,8 +681,8 @@ where
         if let Some(ref mut obj) = value.as_object_mut() {
             match op {
                 PatchOperation::Insert { ident, expr } => {
-                    let new_key = stry!(ident.eval_to_string(ictx));
-                    let new_value = stry!(expr.run_with_context(ictx));
+                    let new_key = stry!(ident.eval_to_string(opts, ictx));
+                    let new_value = stry!(expr.run_with_context(opts, ictx));
                     if obj.contains_key(&new_key) {
                         return error_patch_key_exists(
                             patch_expr,
@@ -710,8 +695,8 @@ where
                     }
                 }
                 PatchOperation::Update { ident, expr } => {
-                    let new_key = stry!(ident.eval_to_string(ictx));
-                    let new_value = stry!(expr.run_with_context(ictx));
+                    let new_key = stry!(ident.eval_to_string(opts, ictx));
+                    let new_value = stry!(expr.run_with_context(opts, ictx));
                     if obj.contains_key(&new_key) {
                         obj.insert(new_key, new_value.into_owned());
                     } else {
@@ -724,17 +709,17 @@ where
                     }
                 }
                 PatchOperation::Upsert { ident, expr } => {
-                    let new_key = stry!(ident.eval_to_string(ictx));
-                    let new_value = stry!(expr.run_with_context(ictx));
+                    let new_key = stry!(ident.eval_to_string(opts, ictx));
+                    let new_value = stry!(expr.run_with_context(opts, ictx));
                     obj.insert(new_key, new_value.into_owned());
                 }
                 PatchOperation::Erase { ident } => {
-                    let new_key = stry!(ident.eval_to_string(ictx));
+                    let new_key = stry!(ident.eval_to_string(opts, ictx));
                     obj.remove(&new_key);
                 }
                 PatchOperation::Move { from, to } => {
-                    let from = stry!(from.eval_to_string(ictx));
-                    let to = stry!(to.eval_to_string(ictx));
+                    let from = stry!(from.eval_to_string(opts, ictx));
+                    let to = stry!(to.eval_to_string(opts, ictx));
 
                     if obj.contains_key(&to) {
                         return error_patch_key_exists(
@@ -749,8 +734,8 @@ where
                     }
                 }
                 PatchOperation::Copy { from, to } => {
-                    let from = stry!(from.eval_to_string(ictx));
-                    let to = stry!(to.eval_to_string(ictx));
+                    let from = stry!(from.eval_to_string(opts, ictx));
+                    let to = stry!(to.eval_to_string(opts, ictx));
 
                     if obj.contains_key(&to) {
                         return error_patch_key_exists(
@@ -766,8 +751,8 @@ where
                     }
                 }
                 PatchOperation::Merge { ident, expr } => {
-                    let new_key = stry!(ident.eval_to_string(ictx));
-                    let merge_spec = stry!(expr.run_with_context(ictx));
+                    let new_key = stry!(ident.eval_to_string(opts, ictx));
+                    let merge_spec = stry!(expr.run_with_context(opts, ictx));
 
                     match obj.get_mut(&new_key) {
                         Some(value @ Value::Object(_)) => {
@@ -790,7 +775,7 @@ where
                     }
                 }
                 PatchOperation::TupleMerge { expr } => {
-                    let merge_spec = stry!(expr.run_with_context(ictx));
+                    let merge_spec = stry!(expr.run_with_context(opts, ictx));
 
                     stry!(merge_values(patch_expr, expr, value, &merge_spec));
                 }
@@ -805,6 +790,7 @@ where
 #[inline]
 fn test_guard<'run, 'event, 'script, Expr>(
     outer: &'script Expr,
+    opts: ExecOpts,
     ictx: InterpreterContext<'run, 'event, 'script>,
     guard: &'script Option<ImutExprInt<'script>>,
 ) -> Result<bool>
@@ -815,7 +801,7 @@ where
     'event: 'run,
 {
     if let Some(guard) = guard {
-        let test = stry!(guard.run_with_context(ictx));
+        let test = stry!(guard.run_with_context(opts, ictx));
         if let Some(b) = test.as_bool() {
             Ok(b)
         } else {
@@ -830,6 +816,7 @@ where
 #[allow(clippy::too_many_lines)]
 fn test_predicate_expr<'run, 'event, 'script, Expr>(
     outer: &'script Expr,
+    opts: ExecOpts,
     ictx: InterpreterContext<'run, 'event, 'script>,
     target: &'run Value<'event>,
     pattern: &'script Pattern<'script>,
@@ -843,24 +830,24 @@ where
 {
     match pattern {
         Pattern::Record(ref rp) => {
-            if stry!(match_rp_expr(outer, ictx.without_result(), &target, &rp)).is_some() {
-                test_guard(outer, ictx, guard)
+            if match_rp_expr(outer, opts.without_result(), ictx, &target, &rp)?.is_some() {
+                test_guard(outer, opts, ictx, guard)
             } else {
                 Ok(false)
             }
         }
         Pattern::Array(ref ap) => {
-            if stry!(match_ap_expr(outer, ictx.without_result(), &target, &ap)).is_some() {
-                test_guard(outer, ictx, guard)
+            if match_ap_expr(outer, opts.without_result(), ictx, &target, &ap)?.is_some() {
+                test_guard(outer, opts, ictx, guard)
             } else {
                 Ok(false)
             }
         }
         Pattern::Expr(ref expr) => {
-            let v = stry!(expr.run_with_context(ictx));
+            let v = stry!(expr.run_with_context(opts, ictx));
             let vb: &Value = v.borrow();
             if val_eq(target, vb) {
-                test_guard(outer, ictx, guard)
+                test_guard(outer, opts, ictx, guard)
             } else {
                 Ok(false)
             }
@@ -868,35 +855,35 @@ where
         Pattern::Assign(ref a) => {
             match *a.pattern {
                 Pattern::Array(ref ap) => {
-                    if let Some(v) = stry!(match_ap_expr(outer, ictx.with_result(), &target, &ap)) {
+                    if let Some(v) = match_ap_expr(outer, opts.with_result(), ictx, &target, &ap)? {
                         // we need to assign prior to the guard so we can check
                         // against the pattern expressions
                         set_local_shadow(outer, ictx.local, &ictx.env.meta, a.idx, v)?;
-                        test_guard(outer, ictx, guard)
+                        test_guard(outer, opts, ictx, guard)
                     } else {
                         Ok(false)
                     }
                 }
                 Pattern::Record(ref rp) => {
-                    if let Some(v) = stry!(match_rp_expr(outer, ictx.with_result(), &target, &rp)) {
+                    if let Some(v) = match_rp_expr(outer, opts.with_result(), ictx, &target, &rp)? {
                         // we need to assign prior to the guard so we can check
                         // against the pattern expressions
                         set_local_shadow(outer, ictx.local, &ictx.env.meta, a.idx, v)?;
 
-                        test_guard(outer, ictx, guard)
+                        test_guard(outer, opts, ictx, guard)
                     } else {
                         Ok(false)
                     }
                 }
                 Pattern::Expr(ref expr) => {
-                    let v = stry!(expr.run_with_context(ictx));
+                    let v = stry!(expr.run_with_context(opts, ictx));
                     let vb: &Value = v.borrow();
                     if val_eq(target, vb) {
                         // we need to assign prior to the guard so we can check
                         // against the pattern expressions
                         set_local_shadow(outer, ictx.local, &ictx.env.meta, a.idx, v.into_owned())?;
 
-                        test_guard(outer, ictx, guard)
+                        test_guard(outer, opts, ictx, guard)
                     } else {
                         Ok(false)
                     }
@@ -912,6 +899,7 @@ where
 #[allow(clippy::too_many_lines)]
 fn match_rp_expr<'run, 'event, 'script, Expr>(
     outer: &'script Expr,
+    opts: ExecOpts,
     ictx: InterpreterContext<'run, 'event, 'script>,
     target: &'run Value<'event>,
     rp: &'script RecordPattern,
@@ -921,7 +909,7 @@ where
     'script: 'event,
     'event: 'run,
 {
-    let mut acc = Value::from(Object::with_capacity(if ictx.opts.result_needed {
+    let mut acc = Value::from(Object::with_capacity(if opts.result_needed {
         rp.fields.len()
     } else {
         0
@@ -932,7 +920,7 @@ where
         match pp {
             PredicatePattern::FieldPresent { .. } => {
                 if let Some(v) = known_key.lookup(target) {
-                    if ictx.opts.result_needed {
+                    if opts.result_needed {
                         known_key.insert(&mut acc, v.clone())?;
                     }
                     continue;
@@ -955,9 +943,9 @@ where
                 };
                 if let Ok(x) =
                     test.extractor
-                        .extract(ictx.opts.result_needed, &testee, &ictx.env.context)
+                        .extract(opts.result_needed, &testee, &ictx.env.context)
                 {
-                    if ictx.opts.result_needed {
+                    if opts.result_needed {
                         known_key.insert(&mut acc, x)?;
                     }
                 } else {
@@ -971,7 +959,7 @@ where
                     return Ok(None);
                 };
 
-                let rhs = stry!(rhs.run_with_context(ictx));
+                let rhs = stry!(rhs.run_with_context(opts, ictx));
                 let vb: &Value = rhs.borrow();
                 let r = val_eq(testee, vb);
                 let m = if *not { !r } else { r };
@@ -990,8 +978,8 @@ where
                 };
 
                 if testee.is_object() {
-                    if let Some(m) = stry!(match_rp_expr(outer, ictx, testee, pattern)) {
-                        if ictx.opts.result_needed {
+                    if let Some(m) = match_rp_expr(outer, opts, ictx, testee, pattern)? {
+                        if opts.result_needed {
                             known_key.insert(&mut acc, m)?;
                         }
                         continue;
@@ -1010,8 +998,8 @@ where
                 };
 
                 if testee.is_array() {
-                    if let Some(r) = stry!(match_ap_expr(outer, ictx, testee, pattern)) {
-                        if ictx.opts.result_needed {
+                    if let Some(r) = match_ap_expr(outer, opts, ictx, testee, pattern)? {
+                        if opts.result_needed {
                             known_key.insert(&mut acc, r)?;
                         }
 
@@ -1032,6 +1020,7 @@ where
 #[inline]
 fn match_ap_expr<'run, 'event, 'script, Expr>(
     outer: &'script Expr,
+    opts: ExecOpts,
     ictx: InterpreterContext<'run, 'event, 'script>,
     target: &'run Value<'event>,
     ap: &'script ArrayPattern,
@@ -1043,27 +1032,27 @@ where
     'event: 'run,
 {
     if let Some(a) = target.as_array() {
-        let mut acc = Vec::with_capacity(if ictx.opts.result_needed { a.len() } else { 0 });
+        let mut acc = Vec::with_capacity(if opts.result_needed { a.len() } else { 0 });
         let mut idx: u64 = 0;
         for candidate in a {
             'inner: for expr in &ap.exprs {
                 match expr {
                     ArrayPredicatePattern::Expr(e) => {
-                        let r = stry!(e.run_with_context(ictx));
+                        let r = stry!(e.run_with_context(opts, ictx));
                         let vb: &Value = r.borrow();
 
                         // NOTE: We are creating a new value here so we have to clone
-                        if val_eq(candidate, vb) && ictx.opts.result_needed {
+                        if val_eq(candidate, vb) && opts.result_needed {
                             acc.push(Value::Array(vec![Value::from(idx), r.into_owned()]));
                         }
                     }
                     ArrayPredicatePattern::Tilde(test) => {
                         if let Ok(r) = test.extractor.extract(
-                            ictx.opts.result_needed,
+                            opts.result_needed,
                             &candidate,
                             &ictx.env.context,
                         ) {
-                            if ictx.opts.result_needed {
+                            if opts.result_needed {
                                 acc.push(Value::Array(vec![Value::from(idx), r]));
                             }
                         } else {
@@ -1071,8 +1060,8 @@ where
                         }
                     }
                     ArrayPredicatePattern::Record(rp) => {
-                        if let Some(r) = stry!(match_rp_expr(outer, ictx, candidate, rp)) {
-                            if ictx.opts.result_needed {
+                        if let Some(r) = match_rp_expr(outer, opts, ictx, candidate, rp)? {
+                            if opts.result_needed {
                                 acc.push(Value::Array(vec![Value::from(idx), r]))
                             };
                         } else {

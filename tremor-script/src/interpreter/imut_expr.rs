@@ -42,15 +42,16 @@ where
         meta: &'run Value<'event>,
         local: &'run LocalStack<'event>,
     ) -> Result<Cow<'run, Value<'event>>> {
-        self.run_with_context(InterpreterContext::of(opts, env, event, state, meta, local))
+        self.run_with_context(opts, InterpreterContext::of(env, event, state, meta, local))
     }
 
     /// Evaluates the expression, with the `InterpreterContext` grouped into a struct.
     pub fn run_with_context(
         &'script self,
+        opts: ExecOpts,
         ictx: InterpreterContext<'run, 'event, 'script>,
     ) -> Result<Cow<'run, Value<'event>>> {
-        self.0.run_with_context(ictx)
+        self.0.run_with_context(opts, ictx)
     }
 }
 impl<'run, 'event, 'script> ImutExprInt<'script>
@@ -61,9 +62,10 @@ where
     #[inline]
     pub fn eval_to_string(
         &'script self,
+        opts: ExecOpts,
         ictx: InterpreterContext<'run, 'event, 'script>,
     ) -> Result<Cow<'event, str>> {
-        match stry!(self.run_with_context(ictx)).borrow() {
+        match stry!(self.run_with_context(opts, ictx)).borrow() {
             Value::String(s) => Ok(s.clone()),
             other => error_need_obj(self, self, other.value_type(), &ictx.env.meta),
         }
@@ -79,23 +81,24 @@ where
         meta: &'run Value<'event>,
         local: &'run LocalStack<'event>,
     ) -> Result<Cow<'run, Value<'event>>> {
-        self.run_with_context(InterpreterContext::of(opts, env, event, state, meta, local))
+        self.run_with_context(opts, InterpreterContext::of(env, event, state, meta, local))
     }
 
     pub fn run_with_context(
         &'script self,
+        opts: ExecOpts,
         ictx: InterpreterContext<'run, 'event, 'script>,
     ) -> Result<Cow<'run, Value<'event>>> {
         match self {
             ImutExprInt::Literal(literal) => Ok(Cow::Borrowed(&literal.value)),
-            ImutExprInt::Path(path) => resolve(self, ictx, path),
-            ImutExprInt::Present { path, .. } => self.present(ictx, path),
+            ImutExprInt::Path(path) => resolve(self, opts, ictx, path),
+            ImutExprInt::Present { path, .. } => self.present(opts, ictx, path),
             ImutExprInt::Record(ref record) => {
                 let mut object: Object = Object::with_capacity(record.fields.len());
 
                 for field in &record.fields {
-                    let result = stry!(field.value.run_with_context(ictx));
-                    let name = stry!(field.name.eval_to_string(ictx));
+                    let result = stry!(field.value.run_with_context(opts, ictx));
+                    let name = stry!(field.name.eval_to_string(opts, ictx));
                     object.insert(name, result.into_owned());
                 }
 
@@ -104,17 +107,17 @@ where
             ImutExprInt::List(ref list) => {
                 let mut r: Vec<Value<'event>> = Vec::with_capacity(list.exprs.len());
                 for expr in &list.exprs {
-                    r.push(stry!(expr.run_with_context(ictx)).into_owned());
+                    r.push(stry!(expr.run_with_context(opts, ictx)).into_owned());
                 }
                 Ok(Cow::Owned(Value::Array(r)))
             }
-            ImutExprInt::Invoke1(ref call) => self.invoke1(ictx, call),
-            ImutExprInt::Invoke2(ref call) => self.invoke2(ictx, call),
-            ImutExprInt::Invoke3(ref call) => self.invoke3(ictx, call),
-            ImutExprInt::Invoke(ref call) => self.invoke(ictx, call),
-            ImutExprInt::InvokeAggr(ref call) => self.emit_aggr(ictx.opts, ictx.env, call),
-            ImutExprInt::Patch(ref expr) => self.patch(ictx, expr),
-            ImutExprInt::Merge(ref expr) => self.merge(ictx, expr),
+            ImutExprInt::Invoke1(ref call) => self.invoke1(opts, ictx, call),
+            ImutExprInt::Invoke2(ref call) => self.invoke2(opts, ictx, call),
+            ImutExprInt::Invoke3(ref call) => self.invoke3(opts, ictx, call),
+            ImutExprInt::Invoke(ref call) => self.invoke(opts, ictx, call),
+            ImutExprInt::InvokeAggr(ref call) => self.emit_aggr(opts, ictx.env, call),
+            ImutExprInt::Patch(ref expr) => self.patch(opts, ictx, expr),
+            ImutExprInt::Merge(ref expr) => self.merge(opts, ictx, expr),
             ImutExprInt::Local {
                 idx,
                 mid,
@@ -149,22 +152,23 @@ where
                 Some(v) => Ok(Cow::Borrowed(v)),
                 _ => error_oops(self, "Unknown const variable", &ictx.env.meta),
             },
-            ImutExprInt::Unary(ref expr) => self.unary(ictx, expr),
-            ImutExprInt::Binary(ref expr) => self.binary(ictx, expr),
-            ImutExprInt::Match(ref expr) => self.match_expr(ictx, expr),
-            ImutExprInt::Comprehension(ref expr) => self.comprehension(ictx, expr),
+            ImutExprInt::Unary(ref expr) => self.unary(opts, ictx, expr),
+            ImutExprInt::Binary(ref expr) => self.binary(opts, ictx, expr),
+            ImutExprInt::Match(ref expr) => self.match_expr(opts, ictx, expr),
+            ImutExprInt::Comprehension(ref expr) => self.comprehension(opts, ictx, expr),
         }
     }
 
     fn comprehension(
         &'script self,
+        opts: ExecOpts,
         ictx: InterpreterContext<'run, 'event, 'script>,
         expr: &'script ImutComprehension,
     ) -> Result<Cow<'run, Value<'event>>> {
         let mut value_vec = vec![];
         let target = &expr.target;
         let cases = &expr.cases;
-        let target_value = stry!(target.run_with_context(ictx));
+        let target_value = stry!(target.run_with_context(opts, ictx));
 
         if let Some(target_map) = target_value.as_object() {
             // Record comprehension case
@@ -184,8 +188,8 @@ where
                 )?;
                 set_local_shadow(self, ictx.local, &ictx.env.meta, expr.val_id, v)?;
                 for e in cases {
-                    if stry!(test_guard(self, ictx, &e.guard)) {
-                        let v = stry!(self.execute_effectors(ictx, e, &e.exprs));
+                    if stry!(test_guard(self, opts, ictx, &e.guard)) {
+                        let v = stry!(self.execute_effectors(opts, ictx, e, &e.exprs));
                         // NOTE: We are creating a new value so we have to clone;
                         value_vec.push(v.into_owned());
                         continue 'comprehension_outer;
@@ -208,8 +212,8 @@ where
                 set_local_shadow(self, ictx.local, &ictx.env.meta, expr.val_id, x)?;
 
                 for e in cases {
-                    if stry!(test_guard(self, ictx, &e.guard)) {
-                        let v = stry!(self.execute_effectors(ictx, e, &e.exprs));
+                    if stry!(test_guard(self, opts, ictx, &e.guard)) {
+                        let v = stry!(self.execute_effectors(opts, ictx, e, &e.exprs));
 
                         value_vec.push(v.into_owned());
                         count += 1;
@@ -225,13 +229,14 @@ where
     #[inline]
     fn execute_effectors<T: BaseExpr>(
         &'script self,
+        opts: ExecOpts,
         ictx: InterpreterContext<'run, 'event, 'script>,
         inner: &'script T,
         effectors: &'script [ImutExpr<'script>],
     ) -> Result<Cow<'run, Value<'event>>> {
         // Since we don't have side effects we don't need to run anything but the last effector!
         if let Some(effector) = effectors.last() {
-            effector.run_with_context(ictx)
+            effector.run_with_context(opts, ictx)
         } else {
             error_missing_effector(self, inner, &ictx.env.meta)
         }
@@ -239,20 +244,22 @@ where
 
     fn match_expr(
         &'script self,
+        opts: ExecOpts,
         ictx: InterpreterContext<'run, 'event, 'script>,
         expr: &'script ImutMatch,
     ) -> Result<Cow<'run, Value<'event>>> {
-        let target = stry!(expr.target.run_with_context(ictx));
+        let target = stry!(expr.target.run_with_context(opts, ictx));
 
         for predicate in &expr.patterns {
             if stry!(test_predicate_expr(
                 self,
-                ictx.clone(),
+                opts,
+                ictx,
                 &target,
                 &predicate.pattern,
                 &predicate.guard,
             )) {
-                return self.execute_effectors(ictx.clone(), predicate, &predicate.exprs);
+                return self.execute_effectors(opts, ictx, predicate, &predicate.exprs);
             }
         }
         error_no_clause_hit(self, &ictx.env.meta)
@@ -260,20 +267,22 @@ where
 
     fn binary(
         &'script self,
+        opts: ExecOpts,
         ictx: InterpreterContext<'run, 'event, 'script>,
         expr: &'script BinExpr<'script>,
     ) -> Result<Cow<'run, Value<'event>>> {
-        let lhs = stry!(expr.lhs.run_with_context(ictx));
-        let rhs = stry!(expr.rhs.run_with_context(ictx));
+        let lhs = stry!(expr.lhs.run_with_context(opts, ictx));
+        let rhs = stry!(expr.rhs.run_with_context(opts, ictx));
         exec_binary(self, expr, &ictx.env.meta, expr.kind, &lhs, &rhs)
     }
 
     fn unary(
         &'script self,
+        opts: ExecOpts,
         ictx: InterpreterContext<'run, 'event, 'script>,
         expr: &'script UnaryExpr<'script>,
     ) -> Result<Cow<'run, Value<'event>>> {
-        let rhs = stry!(expr.expr.run_with_context(ictx));
+        let rhs = stry!(expr.expr.run_with_context(opts, ictx));
         // TODO align this implemenation to be similar to exec_binary?
         match exec_unary(expr.kind, &rhs) {
             Some(v) => Ok(v),
@@ -285,6 +294,7 @@ where
     // FIXME: Quite some overlap with `interpreter::resolve` and `assign`
     fn present(
         &'script self,
+        opts: ExecOpts,
         ictx: InterpreterContext<'run, 'event, 'script>,
         path: &'script Path,
     ) -> Result<Cow<'run, Value<'event>>> {
@@ -341,7 +351,7 @@ where
                 }
 
                 Segment::Element { expr, .. } => {
-                    let next = match (current, stry!(expr.run_with_context(ictx)).borrow()) {
+                    let next = match (current, stry!(expr.run_with_context(opts, ictx)).borrow()) {
                         (Value::Array(a), idx) => {
                             if let Some(idx) = idx.as_usize() {
                                 let (start, end) = if let Some((start, end)) = subrange {
@@ -384,12 +394,12 @@ where
                             (0, a.len())
                         };
 
-                        let s = stry!(range_start.run_with_context(ictx));
+                        let s = stry!(range_start.run_with_context(opts, ictx));
 
                         if let Some(range_start) = s.as_usize() {
                             let range_start = range_start + start;
 
-                            let e = stry!(range_end.run_with_context(ictx));
+                            let e = stry!(range_end.run_with_context(opts, ictx));
 
                             if let Some(range_end) = e.as_usize() {
                                 let range_end = range_end + start;
@@ -416,11 +426,12 @@ where
     // TODO: Can we convince Rust to generate the 3 or 4 versions of this method from one template?
     fn invoke1(
         &'script self,
+        opts: ExecOpts,
         ictx: InterpreterContext<'run, 'event, 'script>,
         expr: &'script Invoke,
     ) -> Result<Cow<'run, Value<'event>>> {
         unsafe {
-            let v = stry!(expr.args.get_unchecked(0).run_with_context(ictx));
+            let v = stry!(expr.args.get_unchecked(0).run_with_context(opts, ictx));
             expr.invocable
                 .invoke(&ictx.env.context, &[v.borrow()])
                 .map(Cow::Owned)
@@ -433,12 +444,13 @@ where
 
     fn invoke2(
         &'script self,
+        opts: ExecOpts,
         ictx: InterpreterContext<'run, 'event, 'script>,
         expr: &'script Invoke,
     ) -> Result<Cow<'run, Value<'event>>> {
         unsafe {
-            let v1 = stry!(expr.args.get_unchecked(0).run_with_context(ictx));
-            let v2 = stry!(expr.args.get_unchecked(1).run_with_context(ictx));
+            let v1 = stry!(expr.args.get_unchecked(0).run_with_context(opts, ictx));
+            let v2 = stry!(expr.args.get_unchecked(1).run_with_context(opts, ictx));
             expr.invocable
                 .invoke(&ictx.env.context, &[v1.borrow(), v2.borrow()])
                 .map(Cow::Owned)
@@ -451,13 +463,14 @@ where
 
     fn invoke3(
         &'script self,
+        opts: ExecOpts,
         ictx: InterpreterContext<'run, 'event, 'script>,
         expr: &'script Invoke,
     ) -> Result<Cow<'run, Value<'event>>> {
         unsafe {
-            let v1 = stry!(expr.args.get_unchecked(0).run_with_context(ictx));
-            let v2 = stry!(expr.args.get_unchecked(1).run_with_context(ictx));
-            let v3 = stry!(expr.args.get_unchecked(2).run_with_context(ictx));
+            let v1 = stry!(expr.args.get_unchecked(0).run_with_context(opts, ictx));
+            let v2 = stry!(expr.args.get_unchecked(1).run_with_context(opts, ictx));
+            let v3 = stry!(expr.args.get_unchecked(2).run_with_context(opts, ictx));
             expr.invocable
                 .invoke(&ictx.env.context, &[v1.borrow(), v2.borrow(), v3.borrow()])
                 .map(Cow::Owned)
@@ -470,13 +483,14 @@ where
 
     fn invoke(
         &'script self,
+        opts: ExecOpts,
         ictx: InterpreterContext<'run, 'event, 'script>,
         expr: &'script Invoke,
     ) -> Result<Cow<'run, Value<'event>>> {
         let argv: Vec<Cow<'run, _>> = expr
             .args
             .iter()
-            .map(|arg| arg.run_with_context(ictx))
+            .map(|arg| arg.run_with_context(opts, ictx))
             .collect::<Result<_>>()?;
 
         // Construct a view into `argv`, since `invoke` expects a slice of references, not Cows.
@@ -520,28 +534,30 @@ where
 
     fn patch(
         &'script self,
+        opts: ExecOpts,
         ictx: InterpreterContext<'run, 'event, 'script>,
         expr: &'script Patch,
     ) -> Result<Cow<'run, Value<'event>>> {
         // NOTE: We clone this since we patch it - this should be not mutated but cloned
 
-        let mut value = stry!(expr.target.run_with_context(ictx)).into_owned();
-        stry!(patch_value(self, ictx, &mut value, expr));
+        let mut value = stry!(expr.target.run_with_context(opts, ictx)).into_owned();
+        stry!(patch_value(self, opts, ictx, &mut value, expr));
         Ok(Cow::Owned(value))
     }
 
     fn merge(
         &'script self,
+        opts: ExecOpts,
         ictx: InterpreterContext<'run, 'event, 'script>,
         expr: &'script Merge,
     ) -> Result<Cow<'run, Value<'event>>> {
         // NOTE: We got to clone here since we're going to change the value
-        let value = stry!(expr.target.run_with_context(ictx));
+        let value = stry!(expr.target.run_with_context(opts, ictx));
 
         if value.is_object() {
             // Make sure we clone the data so we don't mutate it in place
             let mut value = value.into_owned();
-            let replacement = stry!(expr.expr.run_with_context(ictx));
+            let replacement = stry!(expr.expr.run_with_context(opts, ictx));
 
             if replacement.is_object() {
                 stry!(merge_values(self, &expr.expr, &mut value, &replacement));
