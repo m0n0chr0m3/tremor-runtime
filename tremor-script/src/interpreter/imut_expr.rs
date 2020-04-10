@@ -42,14 +42,17 @@ where
         meta: &'run Value<'event>,
         local: &'run LocalStack<'event>,
     ) -> Result<Cow<'run, Value<'event>>> {
-        self.run_with_context(opts, InterpreterContext::of(env, event, state, meta, local))
+        self.run_with_context(
+            opts,
+            &InterpreterContext::of(env, event, state, meta, local),
+        )
     }
 
     /// Evaluates the expression, with the `InterpreterContext` grouped into a struct.
     pub fn run_with_context(
         &'script self,
         opts: ExecOpts,
-        ictx: InterpreterContext<'run, 'event, 'script>,
+        ictx: &InterpreterContext<'run, 'event, 'script>,
     ) -> Result<Cow<'run, Value<'event>>> {
         self.0.run_with_context(opts, ictx)
     }
@@ -63,7 +66,7 @@ where
     pub fn eval_to_string(
         &'script self,
         opts: ExecOpts,
-        ictx: InterpreterContext<'run, 'event, 'script>,
+        ictx: &InterpreterContext<'run, 'event, 'script>,
     ) -> Result<Cow<'event, str>> {
         match stry!(self.run_with_context(opts, ictx)).borrow() {
             Value::String(s) => Ok(s.clone()),
@@ -81,13 +84,16 @@ where
         meta: &'run Value<'event>,
         local: &'run LocalStack<'event>,
     ) -> Result<Cow<'run, Value<'event>>> {
-        self.run_with_context(opts, InterpreterContext::of(env, event, state, meta, local))
+        self.run_with_context(
+            opts,
+            &InterpreterContext::of(env, event, state, meta, local),
+        )
     }
 
     pub fn run_with_context(
         &'script self,
         opts: ExecOpts,
-        ictx: InterpreterContext<'run, 'event, 'script>,
+        ictx: &InterpreterContext<'run, 'event, 'script>,
     ) -> Result<Cow<'run, Value<'event>>> {
         match self {
             ImutExprInt::Literal(literal) => Ok(Cow::Borrowed(&literal.value)),
@@ -162,7 +168,7 @@ where
     fn comprehension(
         &'script self,
         opts: ExecOpts,
-        ictx: InterpreterContext<'run, 'event, 'script>,
+        ictx: &InterpreterContext<'run, 'event, 'script>,
         expr: &'script ImutComprehension,
     ) -> Result<Cow<'run, Value<'event>>> {
         let mut value_vec = vec![];
@@ -230,7 +236,7 @@ where
     fn execute_effectors<T: BaseExpr>(
         &'script self,
         opts: ExecOpts,
-        ictx: InterpreterContext<'run, 'event, 'script>,
+        ictx: &InterpreterContext<'run, 'event, 'script>,
         inner: &'script T,
         effectors: &'script [ImutExpr<'script>],
     ) -> Result<Cow<'run, Value<'event>>> {
@@ -245,7 +251,7 @@ where
     fn match_expr(
         &'script self,
         opts: ExecOpts,
-        ictx: InterpreterContext<'run, 'event, 'script>,
+        ictx: &InterpreterContext<'run, 'event, 'script>,
         expr: &'script ImutMatch,
     ) -> Result<Cow<'run, Value<'event>>> {
         let target = stry!(expr.target.run_with_context(opts, ictx));
@@ -268,7 +274,7 @@ where
     fn binary(
         &'script self,
         opts: ExecOpts,
-        ictx: InterpreterContext<'run, 'event, 'script>,
+        ictx: &InterpreterContext<'run, 'event, 'script>,
         expr: &'script BinExpr<'script>,
     ) -> Result<Cow<'run, Value<'event>>> {
         let lhs = stry!(expr.lhs.run_with_context(opts, ictx));
@@ -279,7 +285,7 @@ where
     fn unary(
         &'script self,
         opts: ExecOpts,
-        ictx: InterpreterContext<'run, 'event, 'script>,
+        ictx: &InterpreterContext<'run, 'event, 'script>,
         expr: &'script UnaryExpr<'script>,
     ) -> Result<Cow<'run, Value<'event>>> {
         let rhs = stry!(expr.expr.run_with_context(opts, ictx));
@@ -295,7 +301,7 @@ where
     fn present(
         &'script self,
         opts: ExecOpts,
-        ictx: InterpreterContext<'run, 'event, 'script>,
+        ictx: &InterpreterContext<'run, 'event, 'script>,
         path: &'script Path,
     ) -> Result<Cow<'run, Value<'event>>> {
         let mut subrange: Option<(usize, usize)> = None;
@@ -427,7 +433,7 @@ where
     fn invoke1(
         &'script self,
         opts: ExecOpts,
-        ictx: InterpreterContext<'run, 'event, 'script>,
+        ictx: &InterpreterContext<'run, 'event, 'script>,
         expr: &'script Invoke,
     ) -> Result<Cow<'run, Value<'event>>> {
         unsafe {
@@ -445,7 +451,7 @@ where
     fn invoke2(
         &'script self,
         opts: ExecOpts,
-        ictx: InterpreterContext<'run, 'event, 'script>,
+        ictx: &InterpreterContext<'run, 'event, 'script>,
         expr: &'script Invoke,
     ) -> Result<Cow<'run, Value<'event>>> {
         unsafe {
@@ -464,7 +470,7 @@ where
     fn invoke3(
         &'script self,
         opts: ExecOpts,
-        ictx: InterpreterContext<'run, 'event, 'script>,
+        ictx: &InterpreterContext<'run, 'event, 'script>,
         expr: &'script Invoke,
     ) -> Result<Cow<'run, Value<'event>>> {
         unsafe {
@@ -484,7 +490,7 @@ where
     fn invoke(
         &'script self,
         opts: ExecOpts,
-        ictx: InterpreterContext<'run, 'event, 'script>,
+        ictx: &InterpreterContext<'run, 'event, 'script>,
         expr: &'script Invoke,
     ) -> Result<Cow<'run, Value<'event>>> {
         let argv: Vec<Cow<'run, _>> = expr
@@ -535,7 +541,7 @@ where
     fn patch(
         &'script self,
         opts: ExecOpts,
-        ictx: InterpreterContext<'run, 'event, 'script>,
+        ictx: &InterpreterContext<'run, 'event, 'script>,
         expr: &'script Patch,
     ) -> Result<Cow<'run, Value<'event>>> {
         // NOTE: We clone this since we patch it - this should be not mutated but cloned
@@ -548,7 +554,7 @@ where
     fn merge(
         &'script self,
         opts: ExecOpts,
-        ictx: InterpreterContext<'run, 'event, 'script>,
+        ictx: &InterpreterContext<'run, 'event, 'script>,
         expr: &'script Merge,
     ) -> Result<Cow<'run, Value<'event>>> {
         // NOTE: We got to clone here since we're going to change the value

@@ -92,7 +92,7 @@ where
             if stry!(test_predicate_expr(
                 self,
                 opts,
-                InterpreterContext::of(env, event, state, meta, local),
+                &InterpreterContext::of(env, event, state, meta, local),
                 &target,
                 &predicate.pattern,
                 &predicate.guard,
@@ -128,13 +128,8 @@ where
         let value = stry!(expr.target.run(opts, env, event, state, meta, local));
         let v: &Value = value.borrow();
         let v: &mut Value = unsafe { mem::transmute(v) };
-        stry!(patch_value(
-            self,
-            opts,
-            InterpreterContext::of(env, event, state, meta, local),
-            v,
-            expr
-        ));
+        let ictx = InterpreterContext::of(env, event, state, meta, local);
+        stry!(patch_value(self, opts, &ictx, v, expr));
         Ok(Cow::Borrowed(v))
     }
 
@@ -203,7 +198,7 @@ where
                     if stry!(test_guard(
                         self,
                         opts,
-                        InterpreterContext::of(env, event, state, meta, local),
+                        &InterpreterContext::of(env, event, state, meta, local),
                         &e.guard
                     )) {
                         let v = demit!(self
@@ -239,7 +234,7 @@ where
                     if stry!(test_guard(
                         self,
                         opts,
-                        InterpreterContext::of(env, event, state, meta, local),
+                        &InterpreterContext::of(env, event, state, meta, local),
                         &e.guard
                     )) {
                         let v = demit!(self
@@ -388,7 +383,7 @@ where
                         };
                     }
                     Segment::Element { expr, .. } => {
-                        let id = stry!(expr.eval_to_string(opts, ictx));
+                        let id = stry!(expr.eval_to_string(opts, &ictx));
                         let v: &mut Value = mem::transmute(current);
                         if let Some(map) = v.as_object_mut() {
                             current = if let Some(v) = map.get_mut(&id) {
@@ -412,7 +407,7 @@ where
         }
         if opts.result_needed {
             //Ok(Cow::Borrowed(current))
-            resolve(self, opts, ictx, path)
+            resolve(self, opts, &ictx, path)
         } else {
             Ok(Cow::Borrowed(&NULL))
         }
@@ -428,6 +423,7 @@ where
         meta: &'run mut Value<'event>,
         local: &'run mut LocalStack<'event>,
     ) -> Result<Cont<'run, 'event>> {
+        let ictx = InterpreterContext::of(env, event, state, meta, local);
         match self {
             Expr::Emit(expr) => match expr.borrow() {
                 EmitExpr {
@@ -436,13 +432,7 @@ where
                     ..
                 } if segments.is_empty() => {
                     let port = if let Some(port) = port {
-                        Some(
-                            stry!(port.eval_to_string(
-                                opts,
-                                InterpreterContext::of(env, event, state, meta, local,)
-                            ))
-                            .to_string(),
-                        )
+                        Some(stry!(port.eval_to_string(opts, &ictx)).to_string())
                     } else {
                         None
                     };
@@ -450,13 +440,7 @@ where
                 }
                 expr => {
                     let port = if let Some(port) = &expr.port {
-                        Some(
-                            stry!(port.eval_to_string(
-                                opts,
-                                InterpreterContext::of(env, event, state, meta, local,)
-                            ))
-                            .to_string(),
-                        )
+                        Some(stry!(port.eval_to_string(opts, &ictx)).to_string())
                     } else {
                         None
                     };

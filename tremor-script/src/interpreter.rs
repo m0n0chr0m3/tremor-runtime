@@ -406,7 +406,7 @@ pub(crate) fn exec_unary<'run, 'event: 'run>(
 pub(crate) fn resolve<'run, 'event, 'script, Expr>(
     outer: &'script Expr,
     opts: ExecOpts,
-    ictx: InterpreterContext<'run, 'event, 'script>,
+    ictx: &InterpreterContext<'run, 'event, 'script>,
     path: &'script Path,
 ) -> Result<Cow<'run, Value<'event>>>
 where
@@ -665,7 +665,7 @@ where
 fn patch_value<'run, 'event, 'script, Expr>(
     _outer: &'script Expr,
     opts: ExecOpts,
-    ictx: InterpreterContext<'run, 'event, 'script>,
+    ictx: &InterpreterContext<'run, 'event, 'script>,
     value: &'run mut Value<'event>,
     expr: &'script Patch,
 ) -> Result<()>
@@ -791,7 +791,7 @@ where
 fn test_guard<'run, 'event, 'script, Expr>(
     outer: &'script Expr,
     opts: ExecOpts,
-    ictx: InterpreterContext<'run, 'event, 'script>,
+    ictx: &InterpreterContext<'run, 'event, 'script>,
     guard: &'script Option<ImutExprInt<'script>>,
 ) -> Result<bool>
 where
@@ -817,7 +817,7 @@ where
 fn test_predicate_expr<'run, 'event, 'script, Expr>(
     outer: &'script Expr,
     opts: ExecOpts,
-    ictx: InterpreterContext<'run, 'event, 'script>,
+    ictx: &InterpreterContext<'run, 'event, 'script>,
     target: &'run Value<'event>,
     pattern: &'script Pattern<'script>,
     guard: &'run Option<ImutExprInt<'script>>,
@@ -900,7 +900,7 @@ where
 fn match_rp_expr<'run, 'event, 'script, Expr>(
     outer: &'script Expr,
     opts: ExecOpts,
-    ictx: InterpreterContext<'run, 'event, 'script>,
+    ictx: &InterpreterContext<'run, 'event, 'script>,
     target: &'run Value<'event>,
     rp: &'script RecordPattern,
 ) -> Result<Option<Value<'event>>>
@@ -1021,7 +1021,7 @@ where
 fn match_ap_expr<'run, 'event, 'script, Expr>(
     outer: &'script Expr,
     opts: ExecOpts,
-    ictx: InterpreterContext<'run, 'event, 'script>,
+    ictx: &InterpreterContext<'run, 'event, 'script>,
     target: &'run Value<'event>,
     ap: &'script ArrayPattern,
 ) -> Result<Option<Value<'event>>>
