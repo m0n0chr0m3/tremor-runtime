@@ -879,7 +879,7 @@ pub(crate) fn error_bad_array_index<'script, 'idx, T, O: BaseExpr, I: BaseExpr>(
         }
     })
 }
-pub(crate) fn error_decreasing_range<'script, 'idx, T, O: BaseExpr, I: BaseExpr>(
+pub(crate) fn error_decreasing_range<'script, T, O: BaseExpr, I: BaseExpr>(
     outer: &O,
     inner: &I,
     path: &ast::Path<'script>,

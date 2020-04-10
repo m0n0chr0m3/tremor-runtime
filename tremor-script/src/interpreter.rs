@@ -442,7 +442,7 @@ where
             // Next segment is an index: index into `current`, if it's an array
             Segment::Idx { idx, .. } => {
                 if let Some(a) = current.as_array() {
-                    let range_to_consider = subrange.unwrap_or(a.as_slice());
+                    let range_to_consider = subrange.unwrap_or_else(|| a.as_slice());
                     let idx = *idx;
 
                     if let Some(c) = range_to_consider.get(idx) {
@@ -470,7 +470,7 @@ where
                 ..
             } => {
                 if let Some(a) = current.as_array() {
-                    let range_to_consider = subrange.unwrap_or(a.as_slice());
+                    let range_to_consider = subrange.unwrap_or_else(|| a.as_slice());
 
                     // Helper closure for evaluating an expression to an `usize` index
                     let as_index = |expr: &ImutExprInt| -> Result<usize> {
@@ -556,7 +556,7 @@ where
                     // If `current` is an array, the segment has to be an index
                     (Value::Array(a), idx) => {
                         if let Some(idx) = idx.as_usize() {
-                            let range_to_consider = subrange.unwrap_or(a.as_slice());
+                            let range_to_consider = subrange.unwrap_or_else(|| a.as_slice());
 
                             if let Some(v) = range_to_consider.get(idx) {
                                 current = v;
