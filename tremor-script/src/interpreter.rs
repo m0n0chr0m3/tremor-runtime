@@ -498,34 +498,10 @@ where
                 if let Some(a) = current.as_array() {
                     let range_to_consider = subrange.unwrap_or_else(|| a.as_slice());
 
-                    // Helper closure for evaluating an expression to an `usize` index
-                    let as_index = |expr: &ImutExprInt| -> Result<usize> {
-                        let val = stry!(expr.run_with_context(opts, ictx));
-                        if let Some(n) = val.as_usize() {
-                            Ok(n)
-                        } else if val.is_i64() {
-                            // TODO: Receive reviewer feedback.
-                            // Note for review: ideally, we'd use something like `is_integer()`
-                            // to give the best possible error message in this case, but no such
-                            // method exists on `Values` (and in `ValueTrait`). I'm using `is_i64`
-                            // as a compromise. Perhaps `is_i128` is better, but it ultimately
-                            // suffers the same problem. For JSON data, `i64` is plenty fine, but to
-                            // be really safe/future-proof, something more robust is needed.
-                            error_bad_array_index(
-                                outer,
-                                expr,
-                                &path,
-                                val.borrow(),
-                                range_to_consider.len(),
-                                &ictx.env.meta,
-                            )
-                        } else {
-                            error_need_int(outer, expr, val.value_type(), &ictx.env.meta)
-                        }
-                    };
-
-                    let range_start = as_index(range_start)?;
-                    let range_end = as_index(range_end)?;
+                    let range_start =
+                        range_start.eval_to_index(outer, opts, ictx, path, &range_to_consider)?;
+                    let range_end =
+                        range_end.eval_to_index(outer, opts, ictx, path, &range_to_consider)?;
 
                     if range_end < range_start {
                         return error_decreasing_range(
@@ -581,6 +557,9 @@ where
                     }
                     // If `current` is an array, the segment has to be an index
                     (Value::Array(a), idx) => {
+                        // FIXME: Same logic as in `eval_to_index` to handle out-of-usize-range
+                        // (e.g., negative numbers) indices.
+
                         if let Some(idx) = idx.as_usize() {
                             let range_to_consider = subrange.unwrap_or_else(|| a.as_slice());
 

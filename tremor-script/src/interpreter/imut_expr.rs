@@ -75,6 +75,29 @@ where
     }
 
     #[inline]
+    pub fn eval_to_index<Expr>(
+        &'script self,
+        outer: &'script Expr,
+        opts: ExecOpts,
+        ictx: &InterpreterContext<'run, 'event, 'script>,
+        path: &'script Path,
+        range: &[Value],
+    ) -> Result<usize>
+    where
+        Expr: BaseExpr,
+    {
+        let val = stry!(self.run_with_context(opts, ictx));
+        if let Some(n) = val.as_usize() {
+            Ok(n)
+        } else if val.is_i64() {
+            // TODO: As soon as value-trait v0.1.8 is used, switch this `is_i64` to `is_integer`.
+            error_bad_array_index(outer, self, path, val.borrow(), range.len(), &ictx.env.meta)
+        } else {
+            error_need_int(outer, self, val.value_type(), &ictx.env.meta)
+        }
+    }
+
+    #[inline]
     pub fn run(
         &'script self,
         opts: ExecOpts,
@@ -304,8 +327,9 @@ where
         ictx: &InterpreterContext<'run, 'event, 'script>,
         path: &'script Path,
     ) -> Result<Cow<'run, Value<'event>>> {
-        let mut subrange: Option<(usize, usize)> = None;
-        let mut current: &Value = match path {
+        // Fetch the base of the path
+        // TODO: Extract this into a method on `Path`?
+        let base_value: &Value = match path {
             Path::Local(path) => match ictx.local.values.get(path.idx) {
                 Some(Some(l)) => l,
                 Some(None) => return Ok(Cow::Borrowed(&FALSE)),
@@ -320,105 +344,112 @@ where
             Path::State(_path) => ictx.state,
         };
 
+        // Resolve the targeted value by applying all path segments
+        let mut subrange: Option<&[Value]> = None;
+        let mut current = base_value;
         for segment in path.segments() {
             match segment {
+                // Next segment is an identifier: lookup the identifier on `current`, if it's an object
                 Segment::Id { key, .. } => {
                     if let Some(c) = key.lookup(current) {
                         current = c;
                         subrange = None;
                         continue;
                     } else {
+                        // No field for that id: not present
                         return Ok(Cow::Borrowed(&FALSE));
                     }
                 }
+                // Next segment is an index: index into `current`, if it's an array
                 Segment::Idx { idx, .. } => {
                     if let Some(a) = current.as_array() {
-                        let (start, end) = if let Some((start, end)) = subrange {
-                            // We check range on setting the subrange!
-                            (start, end)
-                        } else {
-                            (0, a.len())
-                        };
-                        let idx = *idx as usize + start;
-                        if idx >= end {
-                            // We exceed the sub range
-                            return Ok(Cow::Borrowed(&FALSE));
-                        }
-                        if let Some(c) = a.get(idx) {
+                        let range_to_consider = subrange.unwrap_or_else(|| a.as_slice());
+                        let idx = *idx;
+
+                        if let Some(c) = range_to_consider.get(idx) {
                             current = c;
                             subrange = None;
                             continue;
                         } else {
+                            // No element at the index: not present
                             return Ok(Cow::Borrowed(&FALSE));
                         }
                     } else {
+                        // FIXME: Indexing into something that isn't an array: should this return
+                        // false, or return an error?
                         return Ok(Cow::Borrowed(&FALSE));
                     }
                 }
-
-                Segment::Element { expr, .. } => {
-                    let next = match (current, stry!(expr.run_with_context(opts, ictx)).borrow()) {
-                        (Value::Array(a), idx) => {
-                            if let Some(idx) = idx.as_usize() {
-                                let (start, end) = if let Some((start, end)) = subrange {
-                                    // We check range on setting the subrange!
-                                    (start, end)
-                                } else {
-                                    (0, a.len())
-                                };
-                                let idx = idx + start;
-                                if idx >= end {
-                                    // We exceed the sub range
-                                    return Ok(Cow::Borrowed(&FALSE));
-                                }
-                                a.get(idx)
-                            } else {
-                                return Ok(Cow::Borrowed(&FALSE));
-                            }
-                        }
-                        (Value::Object(o), Value::String(id)) => o.get(id),
-                        _other => return Ok(Cow::Borrowed(&FALSE)),
-                    };
-                    if let Some(next) = next {
-                        current = next;
-                        subrange = None;
-                        continue;
-                    } else {
-                        return Ok(Cow::Borrowed(&FALSE));
-                    }
-                }
+                // Next segment is an index range: index into `current`, if it's an array
                 Segment::Range {
                     range_start,
                     range_end,
                     ..
                 } => {
                     if let Some(a) = current.as_array() {
-                        let (start, end) = if let Some((start, end)) = subrange {
-                            // We check range on setting the subrange!
-                            (start, end)
+                        let range_to_consider = subrange.unwrap_or_else(|| a.as_slice());
+
+                        let range_start = range_start.eval_to_index(
+                            self,
+                            opts,
+                            ictx,
+                            path,
+                            &range_to_consider,
+                        )?;
+                        let range_end =
+                            range_end.eval_to_index(self, opts, ictx, path, &range_to_consider)?;
+                        if range_end < range_start {
+                            return error_decreasing_range(
+                                self,
+                                segment,
+                                &path,
+                                range_start,
+                                range_end,
+                                &ictx.env.meta,
+                            );
+                        } else if range_end > range_to_consider.len() {
+                            // Index is out of array bounds: not present
+                            return Ok(Cow::Borrowed(&FALSE));
                         } else {
-                            (0, a.len())
-                        };
+                            subrange = Some(&range_to_consider[range_start..range_end]);
+                            continue;
+                        }
+                    } else {
+                        // FIXME: Indexing into something that isn't an array: should this return
+                        // false, or return an error? (Should probably have the same answer as the
+                        // same question a couple of lines higher in this function.)
+                        return Ok(Cow::Borrowed(&FALSE));
+                    }
+                }
+                // Next segment is an expression: run `expr` to know which key it signifies at runtime
+                Segment::Element { expr, .. } => {
+                    let key = stry!(expr.run_with_context(opts, ictx));
 
-                        let s = stry!(range_start.run_with_context(opts, ictx));
+                    let next = match (current, key.borrow()) {
+                        // The segment resolved to an identifier, and `current` is an object: lookup
+                        (Value::Object(o), Value::String(id)) => o.get(id),
+                        // If `current` is an array, the segment has to be an index
+                        (Value::Array(a), idx) => {
+                            // FIXME: Same logic as in `eval_to_index` to handle out-of-usize-range
+                            // (e.g., negative numbers) indices.
 
-                        if let Some(range_start) = s.as_usize() {
-                            let range_start = range_start + start;
-
-                            let e = stry!(range_end.run_with_context(opts, ictx));
-
-                            if let Some(range_end) = e.as_usize() {
-                                let range_end = range_end + start;
-                                // We're exceeding the array
-                                if range_end >= end {
-                                    return Ok(Cow::Borrowed(&FALSE));
-                                } else {
-                                    subrange = Some((range_start, range_end));
-                                    continue;
-                                }
+                            if let Some(idx) = idx.as_usize() {
+                                let range_to_consider = subrange.unwrap_or_else(|| a.as_slice());
+                                range_to_consider.get(idx)
+                            } else {
+                                // Index is out of array bounds: not present
+                                return Ok(Cow::Borrowed(&FALSE));
                             }
                         }
-                        return Ok(Cow::Borrowed(&FALSE));
+                        // Anything else: not present
+                        // TODO: Double-check this reasoning, are there some cases where we'd
+                        // want to return an error anyway?
+                        _other => return Ok(Cow::Borrowed(&FALSE)),
+                    };
+                    if let Some(next) = next {
+                        current = next;
+                        subrange = None;
+                        continue;
                     } else {
                         return Ok(Cow::Borrowed(&FALSE));
                     }
