@@ -127,13 +127,19 @@ impl ExecOpts {
 }
 
 /// A grouping of data that is commonly passed through interpreter methods.
-#[allow(missing_docs)] // FIXME: Don't approve a PR with this line! ;)
-#[derive(Clone, Copy)]
+// IMO "Context" is too vague a name. Even "InterpreterContext" is a vague name for a vague thing...
+#[allow(clippy::module_name_repetitions)]
+//#[derive(Clone, Copy)]
 pub struct InterpreterContext<'run, 'event, 'script> {
+    /// The interpreter environment
     pub env: &'run Env<'run, 'event, 'script>,
+    /// The event being processed
     pub event: &'run Value<'event>,
+    /// The state kept from one event's processing to the next
     pub state: &'run Value<'static>,
+    /// FIXME: Yeah, good point, what is `meta` for?
     pub meta: &'run Value<'event>,
+    /// The local stack where the interpreter keeps values bound to variables
     pub local: &'run LocalStack<'event>,
 }
 
