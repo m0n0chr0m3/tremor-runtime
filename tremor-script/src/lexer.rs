@@ -815,7 +815,10 @@ impl<'input> Lexer<'input> {
         let (end, lexeme) = self.take_while(start, |ch| ch == '-');
 
         match lexeme {
-            "-" => Ok(spanned2(start, end, Token::Sub)),
+            "-" => match self.lookahead() {
+                Some((_loc, c)) if is_dec_digit(c) => self.nm(start),
+                _ => Ok(spanned2(start, end, Token::Sub)),
+            },
             _ => Ok(spanned2(start, end, Token::Bad(lexeme.to_string()))),
         }
     }

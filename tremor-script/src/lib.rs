@@ -417,6 +417,12 @@ mod tests {
         eval!("false;", Value::from(false));
         eval!("0;", Value::from(0));
         eval!("123;", Value::from(123));
+        eval!("-123;", Value::from(-123));
+        eval!("9223372036854775807;", Value::from(9223372036854775807i64));
+        eval!(
+            "-9223372036854775808;",
+            Value::from(-9223372036854775808i64)
+        );
         eval!("123.456;", Value::from(123.456)); // 123.456 we can't match aginst float ...
         eval!(
             "123.456e10;",
